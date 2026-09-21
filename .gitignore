@@ -1,0 +1,15 @@
+.DS_Store
+Thumbs.db
+node_modules/
+*.log
+
+# Never in the public repo: they describe an individual person.
+docs/
+schema/
+tests/
+tools/
+apps-script/
+
+# Local-only assets
+photos/
+*.tranche-staging/

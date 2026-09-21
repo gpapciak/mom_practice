@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Laptop Check</title>
+<style>
+  :root {
+    --bg: #f7f6f3;
+    --fg: #1c1b19;
+    --muted: #5d5a54;
+    --line: #d8d5cd;
+    --card: #ffffff;
+    --accent: #1b4f9c;
+    --ok: #1d6b3f;
+    --warn: #8a5a00;
+    --bad: #97231c;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg); }
+  body {
+    font: 17px/1.55 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+    padding: 28px 20px 80px;
+    max-width: 780px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 28px; font-weight: 600; letter-spacing: -0.01em; margin: 0 0 6px; }
+  h2 { font-size: 19px; font-weight: 600; margin: 0 0 10px; }
+  .sub { color: var(--muted); margin: 0 0 28px; }
+  section {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 20px 22px;
+    margin-bottom: 18px;
+  }
+  .step { color: var(--accent); font-weight: 600; font-size: 14px; letter-spacing: .06em; text-transform: uppercase; margin-bottom: 6px; }
+  p { margin: 0 0 14px; }
+  p:last-child { margin-bottom: 0; }
+  button {
+    font: inherit; font-weight: 600;
+    background: var(--accent); color: #fff;
+    border: 0; border-radius: 8px;
+    padding: 13px 22px; cursor: pointer;
+  }
+  button:hover { filter: brightness(1.08); }
+  button.secondary { background: #e8e6e0; color: var(--fg); }
+  button[disabled] { opacity: .45; cursor: default; filter: none; }
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  table { border-collapse: collapse; width: 100%; font-size: 15px; }
+  td { padding: 5px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td:first-child { color: var(--muted); width: 48%; padding-right: 14px; }
+  td:last-child { font-variant-numeric: tabular-nums; }
+  .ok { color: var(--ok); font-weight: 600; }
+  .warn { color: var(--warn); font-weight: 600; }
+  .bad { color: var(--bad); font-weight: 600; }
+  #card {
+    height: 54mm; /* irrelevant to the measure; only the width is matched */
+    background: linear-gradient(135deg, #2c3e6b, #1b4f9c);
+    border-radius: 10px;
+    margin: 16px 0;
+  }
+  input[type=number] {
+    font: inherit; padding: 9px 11px;
+    border: 1px solid var(--line); border-radius: 7px;
+    width: 110px; background: #fff; color: var(--fg);
+  }
+  input[type=text] {
+    font: 14px ui-monospace, SFMono-Regular, Menlo, monospace;
+    padding: 10px 11px; width: 100%;
+    border: 1px solid var(--line); border-radius: 7px;
+    background: #fff; color: var(--fg);
+  }
+  #pad {
+    height: 130px; border: 2px dashed var(--line); border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--muted); text-align: center; margin: 14px 0;
+    user-select: none;
+  }
+  #pad.live { border-color: var(--accent); border-style: solid; color: var(--accent); }
+  pre {
+    background: #f0eee8; border: 1px solid var(--line); border-radius: 8px;
+    padding: 12px; font-size: 12px; overflow: auto; max-height: 240px;
+    white-space: pre-wrap; word-break: break-all;
+  }
+  .note { font-size: 14.5px; color: var(--muted); }
+  .hint { background: #fdf7e3; border-left: 3px solid #d9b03a; padding: 12px 14px; border-radius: 0 7px 7px 0; font-size: 15px; margin: 0 0 14px; }
+</style>
+</head>
+<body>
+
+<h1>Laptop Check</h1>
+<p class="sub">
+  For a helper to run once, in Safari, on the MacBook this will be used on. It
+  measures the laptop, not the person &mdash; nothing here is a test of anyone.
+</p>
+
+<div class="hint">
+  <strong>Before you start:</strong> do not change Safari&rsquo;s zoom, the window
+  size, or the screen resolution. The whole point is to record how the machine is
+  set up right now, at the size it is actually used at.
+</div>
+
+<section>
+  <div class="step">Step 1 &middot; automatic</div>
+  <h2>Screen and window</h2>
+  <table id="t-screen"></table>
+</section>
+
+<section>
+  <div class="step">Step 2 &middot; needs you</div>
+  <h2>Physical size</h2>
+  <p>
+    Hold any credit or bank card flat against the screen, next to the blue
+    rectangle. Use the buttons until the rectangle is <em>exactly</em> as wide as
+    the card.
+  </p>
+  <div id="card"></div>
+  <div class="row">
+    <button class="secondary" data-adj="-10">&minus;10</button>
+    <button class="secondary" data-adj="-1">&minus;1</button>
+    <button class="secondary" data-adj="1">+1</button>
+    <button class="secondary" data-adj="10">+10</button>
+    <span class="note" id="card-readout"></span>
+  </div>
+  <p class="note" style="margin-top:14px">
+    Every bank card in the world is 85.6&nbsp;mm wide, so matching one tells us how
+    many screen pixels make a millimetre. That is what turns the layout into real
+    visual angle instead of a guess.
+  </p>
+</section>
+
+<section>
+  <div class="step">Step 3 &middot; needs you</div>
+  <h2>Viewing distance</h2>
+  <p>
+    Roughly how far are the user's eyes from the screen in normal use, in
+    centimetres? A rough number is genuinely fine &mdash; 50 to 60&nbsp;cm is
+    typical for a laptop at a table.
+  </p>
+  <div class="row">
+    <input type="number" id="dist" value="55" min="20" max="120" step="1">
+    <span class="note">cm</span>
+  </div>
+</section>
+
+<section>
+  <div class="step">Step 4 &middot; needs you</div>
+  <h2>Mouse movement</h2>
+  <p>
+    Click inside the box, then wiggle the mouse around inside it for a few seconds
+    until it stops by itself.
+  </p>
+  <div id="pad">Click here, then move the mouse</div>
+  <table id="t-mouse"></table>
+  <p class="note">
+    This checks how often Safari reports mouse movement on this machine. It decides
+    whether <em>thinking</em> time can be separated from <em>reaching</em> time
+    &mdash; the one measurement the whole design is most careful about.
+  </p>
+</section>
+
+<section>
+  <div class="step">Step 5 &middot; needs you</div>
+  <h2>Sound</h2>
+  <p>Turn the volume up, then press the button. You should hear a short sentence.</p>
+  <div class="row">
+    <button id="speak">Test the voice</button>
+    <span class="note" id="speak-readout"></span>
+  </div>
+  <table id="t-speech"></table>
+  <p class="note">
+    If you hear nothing but the table below says it started, the Mac&rsquo;s own
+    volume is down or muted. The browser cannot tell the difference, which is
+    exactly why a person has to run this step.
+  </p>
+</section>
+
+<section>
+  <div class="step">Step 6 &middot; automatic</div>
+  <h2>Storage</h2>
+  <table id="t-storage"></table>
+</section>
+
+<section>
+  <div class="step">Step 7 &middot; last one</div>
+  <h2>Send the results</h2>
+  <p id="token-wrap" hidden>
+    <span class="note">Paste the <strong>diagnostic</strong> token (the one starting
+    <code>diag_</code>, shown in the Apps Script log when <code>setup()</code> was run):</span>
+    <input type="text" id="token" placeholder="diag_...">
+  </p>
+  <div class="row">
+    <button id="send">Send to the spreadsheet</button>
+    <span id="send-readout"></span>
+  </div>
+  <p class="note" style="margin-top:16px">
+    If sending fails, nothing is lost &mdash; copy the text below and paste it into
+    a message instead.
+  </p>
+  <pre id="dump"></pre>
+</section>
+
+<script>
+'use strict';
+
+/* ===================================================================
+ * Cognitive Practice - hardware diagnostic.
+ *
+ * Two jobs, both of which must happen before Probe A is written:
+ *
+ *  1. Capture the real geometry of the target machine. Layout is derived from the
+ *     measured viewport rather than frozen in pixels, so that a stray Safari
+ *     zoom rescales the session proportionally instead of silently changing
+ *     target distances and making motor slowing appear in the reaction-time
+ *     series. But deriving it needs a starting measurement, and turning it into
+ *     actual visual angle needs a physical calibration - hence the card.
+ *
+ *  2. Prove four paths end to end on the real machine: the Apps Script write,
+ *     speech, IndexedDB, and the mousemove sampling rate. If mousemove is
+ *     coalesced below about 30 Hz here, the 8-pixel movement-onset threshold
+ *     cannot resolve decision time from travel time, and that has to be known
+ *     now rather than discovered in the data in November.
+ * =================================================================== */
+
+/* The deployed Apps Script web app.
+ *
+ * This URL is public the moment this page ships — anyone who views source can
+ * read it. That is accepted: the endpoint's defence is not URL secrecy but the
+ * token scopes below, which is why this page's token can write diagnostic rows
+ * and nothing else. It cannot touch trial data even if it is scraped.
+ * Access scopes are documented privately. */
+var ENDPOINT = 'https://script.google.com/macros/s/AKfycbyHjrEQxeQLbyL34nmy6dGmRh__q6Jzu4aFeWYR0NdRs-aszuK3sQTPCoRjxZXTlsDaDg/exec';
+
+/* The DIAGNOSTIC token, printed by setup() in the Apps Script editor log.
+ *
+ * Must be the diag_ token, never the app_ one. This page ships on a public site,
+ * so its token is the one most likely to be scraped, and its whole job is to be
+ * unable to write trial data. A swap would break nothing visibly - this page would
+ * keep working - while quietly publishing trial-write authority. */
+var TOKEN = 'diag_58704e870c1b4c62b55fc13ff01d42be';
+
+if (TOKEN && TOKEN.indexOf('diag_') !== 0) {
+  document.addEventListener('DOMContentLoaded', function () {
+    document.body.innerHTML =
+      '<h1>Wrong token</h1><p>This page needs the <code>diag_</code> token, not ' +
+      '<code>' + TOKEN.split('_')[0] + '_</code>.</p>';
+  });
+  throw new Error('diagnostic/index.html requires the diag_ token');
+}
+
+var CARD_WIDTH_MM = 85.6;   /* ISO/IEC 7810 ID-1. Every bank card. */
+var APP_VERSION = 'diag-0.1.0+2026-09-19';
+
+/* Layout unit used by the real session. Geometry is a fixed fraction of u, and
+ * the divisors are the widest and tallest extents any screen needs in u-units,
+ * so the session always fits without scrolling. Kept identical to the app. */
+function stageUnit(w, h) { return Math.min(w / 1.32, h / 0.825); }
+
+var D = {
+  diag_uid: uuid(),
+  run_at_ms: Date.now(),
+  app_version: APP_VERSION,
+  tz_offset_min: new Date().getTimezoneOffset(),
+  ua_string: navigator.userAgent,
+  platform: navigator.platform || '',
+  language: navigator.language || '',
+
+  inner_w: 0, inner_h: 0, outer_w: 0, outer_h: 0,
+  screen_w: 0, screen_h: 0, avail_w: 0, avail_h: 0,
+  dpr: 0, vv_scale: '', vv_w: '', vv_h: '',
+  stage_px: 0,
+
+  card_px_width: 320,
+  px_per_mm: '',
+  viewing_distance_cm: 55,
+  stage_deg: '',
+
+  speech_supported: ('speechSynthesis' in window),
+  speech_voices_n: '',
+  speech_fired: '',
+  speech_error: '',
+
+  idb_ok: '',
+  storage_persisted: '',
+  storage_quota_bytes: '',
+  storage_usage_bytes: '',
+
+  mm_samples: '',
+  mm_duration_ms: '',
+  mm_rate_hz: '',
+  mm_median_interval_ms: '',
+  mm_min_interval_ms: '',
+
+  notes: ''
+};
+
+/* ---------- helpers ---------- */
+
+function uuid() {
+  if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+    var r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
+}
+
+function $(id) { return document.getElementById(id); }
+
+function table(el, rows) {
+  el.innerHTML = rows.map(function (r) {
+    var cls = r[2] ? ' class="' + r[2] + '"' : '';
+    return '<tr><td>' + r[0] + '</td><td' + cls + '>' + r[1] + '</td></tr>';
+  }).join('');
+}
+
+function median(a) {
+  if (!a.length) return null;
+  var s = a.slice().sort(function (x, y) { return x - y; });
+  var m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
+function redraw() { renderScreen(); renderCard(); dump(); }
+
+function dump() { $('dump').textContent = JSON.stringify(D, null, 2); }
+
+/* ---------- Step 1: screen and window ---------- */
+
+function measure() {
+  D.inner_w = window.innerWidth;
+  D.inner_h = window.innerHeight;
+  D.outer_w = window.outerWidth;
+  D.outer_h = window.outerHeight;
+  D.screen_w = screen.width;
+  D.screen_h = screen.height;
+  D.avail_w = screen.availWidth;
+  D.avail_h = screen.availHeight;
+  D.dpr = window.devicePixelRatio || 1;
+  if (window.visualViewport) {
+    D.vv_scale = window.visualViewport.scale;
+    D.vv_w = Math.round(window.visualViewport.width);
+    D.vv_h = Math.round(window.visualViewport.height);
+  }
+  D.stage_px = Math.round(stageUnit(D.inner_w, D.inner_h));
+}
+
+function renderScreen() {
+  /* devicePixelRatio moves with Safari page zoom, so on a Retina Mac a value
+   * that is not 2 is itself zoom evidence. Reported rather than corrected:
+   * whatever is actually in use is the correct setting. */
+  var zoomHint = '';
+  if (D.dpr && Math.abs(D.dpr - 2) > 0.01 && Math.abs(D.dpr - 1) > 0.01) {
+    zoomHint = ' <span class="warn">(suggests page zoom is not 100%)</span>';
+  }
+  table($('t-screen'), [
+    ['Window (CSS px)', D.inner_w + ' &times; ' + D.inner_h],
+    ['Screen', D.screen_w + ' &times; ' + D.screen_h],
+    ['Available screen', D.avail_w + ' &times; ' + D.avail_h],
+    ['devicePixelRatio', D.dpr + zoomHint],
+    ['visualViewport scale', D.vv_scale === '' ? 'not reported' : D.vv_scale],
+    ['Layout unit that would be used', D.stage_px + ' px']
+  ]);
+}
+
+/* ---------- Step 2: physical calibration ---------- */
+
+function renderCard() {
+  $('card').style.width = D.card_px_width + 'px';
+  D.px_per_mm = +(D.card_px_width / CARD_WIDTH_MM).toFixed(4);
+  D.stage_deg = angleDeg(D.stage_px, D.px_per_mm, D.viewing_distance_cm);
+  $('card-readout').innerHTML =
+    D.card_px_width + ' px wide &middot; ' + D.px_per_mm.toFixed(2) + ' px/mm' +
+    (D.stage_deg ? ' &middot; layout unit &asymp; ' + D.stage_deg + '&deg; of visual angle' : '');
+}
+
+/* Visual angle subtended by n CSS px, given px/mm and viewing distance. This is
+ * the quantity that should stay constant across zoom changes and across a
+ * replacement laptop - it, not the pixel count, is what gets frozen. */
+function angleDeg(px, pxPerMm, distCm) {
+  if (!px || !pxPerMm || !distCm) return '';
+  var mm = px / pxPerMm;
+  var rad = 2 * Math.atan((mm / 2) / (distCm * 10));
+  return +(rad * 180 / Math.PI).toFixed(2);
+}
+
+Array.prototype.forEach.call(document.querySelectorAll('[data-adj]'), function (b) {
+  b.addEventListener('click', function () {
+    D.card_px_width = Math.max(40, D.card_px_width + (+b.dataset.adj));
+    renderCard(); dump();
+  });
+});
+
+$('dist').addEventListener('input', function () {
+  D.viewing_distance_cm = +$('dist').value || 55;
+  renderCard(); dump();
+});
+
+/* ---------- Step 4: mousemove sampling rate ---------- */
+
+(function mouseProbe() {
+  var pad = $('pad');
+  var stamps = [];
+  var running = false;
+  var t0 = 0;
+
+  function onMove(e) {
+    /* event.timeStamp, not performance.now() inside the handler: handler
+     * dispatch can be delayed by tens of milliseconds under load, which would
+     * make the sampling interval look worse than it is. */
+    stamps.push(e.timeStamp);
+  }
+
+  function stop() {
+    running = false;
+    pad.classList.remove('live');
+    pad.removeEventListener('mousemove', onMove);
+
+    var gaps = [];
+    for (var i = 1; i < stamps.length; i++) gaps.push(stamps[i] - stamps[i - 1]);
+
+    var dur = stamps.length > 1 ? (stamps[stamps.length - 1] - stamps[0]) : 0;
+    D.mm_samples = stamps.length;
+    D.mm_duration_ms = Math.round(dur);
+    D.mm_rate_hz = dur > 0 ? +((stamps.length - 1) / (dur / 1000)).toFixed(1) : 0;
+    D.mm_median_interval_ms = gaps.length ? +median(gaps).toFixed(1) : '';
+    D.mm_min_interval_ms = gaps.length ? +Math.min.apply(null, gaps).toFixed(1) : '';
+
+    /* 60 Hz gives ~17 ms resolution on movement onset, which is ample.
+     * Below ~30 Hz the decision/travel split stops being trustworthy and the
+     * probe design needs revisiting before it is written. */
+    var cls = D.mm_rate_hz >= 50 ? 'ok' : (D.mm_rate_hz >= 30 ? 'warn' : 'bad');
+    var verdict = D.mm_rate_hz >= 50
+      ? 'good - decision and travel time can be separated cleanly'
+      : (D.mm_rate_hz >= 30
+        ? 'workable, but coarse'
+        : 'too low - the decision/travel split needs rethinking');
+
+    pad.textContent = 'Done. ' + D.mm_samples + ' movements recorded.';
+    table($('t-mouse'), [
+      ['Movement reports', D.mm_samples],
+      ['Over', D.mm_duration_ms + ' ms'],
+      ['Rate', D.mm_rate_hz + ' Hz', cls],
+      ['Median gap between reports', D.mm_median_interval_ms + ' ms'],
+      ['Shortest gap', D.mm_min_interval_ms + ' ms'],
+      ['Verdict', verdict, cls]
+    ]);
+    dump();
+  }
+
+  pad.addEventListener('click', function () {
+    if (running) return;
+    running = true;
+    stamps = [];
+    t0 = Date.now();
+    pad.classList.add('live');
+    pad.textContent = 'Recording - keep moving the mouse in here...';
+    pad.addEventListener('mousemove', onMove);
+    setTimeout(stop, 3000);
+  });
+})();
+
+/* ---------- Step 5: speech ---------- */
+
+$('speak').addEventListener('click', function () {
+  if (!D.speech_supported) {
+    D.speech_fired = false;
+    D.speech_error = 'speechSynthesis not available';
+    renderSpeech('bad', 'This Safari has no speech support at all.');
+    return;
+  }
+
+  /* Voices often load asynchronously and the FIRST utterance of a page is the
+   * one most likely to be dropped silently. The real app warms the voice list
+   * on the START gesture for this reason; here we just record what happened. */
+  var voices = speechSynthesis.getVoices();
+  D.speech_voices_n = voices.length;
+
+  var u = new SpeechSynthesisUtterance(
+    'Good morning. This is the voice the practice will use.');
+  u.rate = 0.95;
+
+  var fired = false;
+  u.onstart = function () {
+    fired = true;
+    D.speech_fired = true;
+    renderSpeech('ok', 'Started speaking. Did you hear it?');
+  };
+  u.onerror = function (ev) {
+    D.speech_fired = false;
+    D.speech_error = (ev && ev.error) ? String(ev.error) : 'unknown error';
+    renderSpeech('bad', 'Failed: ' + D.speech_error);
+  };
+
+  $('speak-readout').textContent = 'speaking...';
+  speechSynthesis.speak(u);
+
+  /* An utterance that never starts and never errors is the quiet failure this
+   * column exists to catch. Without a timeout it would look like a pending
+   * success forever. */
+  setTimeout(function () {
+    if (!fired && D.speech_fired !== false) {
+      D.speech_fired = false;
+      D.speech_error = 'no onstart and no onerror within 3s (silently dropped)';
+      renderSpeech('bad', 'Nothing happened - the utterance was dropped silently.');
+    }
+  }, 3000);
+});
+
+function renderSpeech(cls, msg) {
+  $('speak-readout').innerHTML = '<span class="' + cls + '">' + msg + '</span>';
+  table($('t-speech'), [
+    ['Speech supported', D.speech_supported ? 'yes' : 'no', D.speech_supported ? 'ok' : 'bad'],
+    ['Voices available', D.speech_voices_n === '' ? '-' : D.speech_voices_n,
+      D.speech_voices_n === 0 ? 'bad' : ''],
+    ['Utterance started', D.speech_fired === '' ? 'not tested yet' : (D.speech_fired ? 'yes' : 'no'),
+      D.speech_fired === true ? 'ok' : (D.speech_fired === false ? 'bad' : '')],
+    ['Error', D.speech_error || 'none']
+  ]);
+  dump();
+}
+
+/* ---------- Step 6: storage ---------- */
+
+(function storageProbe() {
+  function render() {
+    var quotaMb = D.storage_quota_bytes ? Math.round(D.storage_quota_bytes / 1048576) + ' MB' : 'not reported';
+    var usageMb = D.storage_usage_bytes || D.storage_usage_bytes === 0
+      ? Math.round(D.storage_usage_bytes / 1048576) + ' MB' : 'not reported';
+    /* A tranche of pool images is roughly 80 MB, so anything under a few
+     * hundred MB of quota would force a smaller tranche. */
+    var quotaCls = (D.storage_quota_bytes && D.storage_quota_bytes < 300 * 1048576) ? 'warn' : '';
+    table($('t-storage'), [
+      ['IndexedDB write and read', D.idb_ok === '' ? 'testing...' : (D.idb_ok ? 'works' : 'FAILED'),
+        D.idb_ok === true ? 'ok' : (D.idb_ok === false ? 'bad' : '')],
+      ['Storage marked persistent', D.storage_persisted === '' ? 'testing...' : (D.storage_persisted ? 'yes' : 'no'),
+        D.storage_persisted === true ? 'ok' : 'warn'],
+      ['Quota', quotaMb, quotaCls],
+      ['Currently used', usageMb]
+    ]);
+    dump();
+  }
+  render();
+
+  /* Proves the local-first write path works here at all. If this fails, nothing
+   * else in the design does. */
+  try {
+    var req = indexedDB.open('diag-probe', 1);
+    req.onupgradeneeded = function () { req.result.createObjectStore('t'); };
+    req.onsuccess = function () {
+      var db = req.result;
+      try {
+        var tx = db.transaction('t', 'readwrite');
+        tx.objectStore('t').put({ at: Date.now() }, 'k');
+        tx.oncomplete = function () {
+          var rtx = db.transaction('t', 'readonly');
+          var get = rtx.objectStore('t').get('k');
+          get.onsuccess = function () { D.idb_ok = !!get.result; db.close(); render(); };
+          get.onerror = function () { D.idb_ok = false; db.close(); render(); };
+        };
+        tx.onerror = function () { D.idb_ok = false; db.close(); render(); };
+      } catch (e) { D.idb_ok = false; D.notes += ' idb:' + e; render(); }
+    };
+    req.onerror = function () { D.idb_ok = false; render(); };
+  } catch (e) { D.idb_ok = false; D.notes += ' idb:' + e; render(); }
+
+  /* Safari can evict script-writable storage. Asking for persistence is not a
+   * guarantee, so the answer is recorded rather than relied on - every piece of
+   * local state in the real app is reconstructable from the Sheet. */
+  if (navigator.storage && navigator.storage.persist) {
+    navigator.storage.persist().then(function (p) { D.storage_persisted = !!p; render(); })
+      .catch(function () { D.storage_persisted = false; render(); });
+  } else {
+    D.storage_persisted = false; render();
+  }
+
+  if (navigator.storage && navigator.storage.estimate) {
+    navigator.storage.estimate().then(function (est) {
+      D.storage_quota_bytes = est.quota || '';
+      D.storage_usage_bytes = est.usage || 0;
+      render();
+    }).catch(function () { render(); });
+  }
+})();
+
+/* ---------- Step 7: send ---------- */
+
+if (!TOKEN) $('token-wrap').hidden = false;
+
+$('send').addEventListener('click', function () {
+  var url = ENDPOINT;
+  var token = TOKEN || $('token').value.trim();
+  if (!token) {
+    $('send-readout').innerHTML = '<span class="bad">Paste the diagnostic token first.</span>';
+    return;
+  }
+
+  measure();               /* re-measure in case the window moved during the run */
+  renderCard();
+
+  var columns = Object.keys(D);
+  var payload = {
+    token: token,
+    kind: 'diagnostic',
+    diagnostic: {
+      columns: columns,
+      rows: [columns.map(function (k) { return D[k] === '' ? null : D[k]; })],
+      text_columns: []
+    }
+  };
+
+  $('send').disabled = true;
+  $('send-readout').textContent = 'sending...';
+
+  /* text/plain, NOT application/json. An application/json POST triggers a
+   * preflight OPTIONS request, which Apps Script web apps do not answer, and it
+   * fails in Safari with a CORS error that looks exactly like a network problem.
+   * The script parses e.postData.contents itself. */
+  fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify(payload)
+  })
+    .then(function (r) { return r.json(); })
+    .then(function (res) {
+      if (res && res.ok) {
+        $('send-readout').innerHTML = '<span class="ok">Sent. It is in the spreadsheet.</span>';
+      } else {
+        $('send-readout').innerHTML = '<span class="bad">Rejected: ' +
+          ((res && res.error) || 'unknown') + ' &mdash; copy the text below instead.</span>';
+        $('send').disabled = false;
+      }
+    })
+    .catch(function (err) {
+      $('send-readout').innerHTML = '<span class="bad">Could not send (' + err.message +
+        ') &mdash; copy the text below instead.</span>';
+      $('send').disabled = false;
+    });
+});
+
+/* ---------- go ---------- */
+
+measure();
+redraw();
+renderSpeech('', 'not tested yet');
+window.addEventListener('resize', function () { measure(); redraw(); });
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', function () { measure(); redraw(); });
+}
+</script>
+</body>
+</html>
