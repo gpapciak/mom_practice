@@ -156,7 +156,9 @@
   <p class="note">
     This checks how often Safari reports mouse movement on this machine. It decides
     whether <em>thinking</em> time can be separated from <em>reaching</em> time
-    &mdash; the one measurement the whole design is most careful about.
+    &mdash; the one measurement the whole design is most careful about. Pausing
+    mid-test is fine: the figure that matters is measured only while the mouse is
+    actually moving.
   </p>
 </section>
 
@@ -250,7 +252,7 @@ if (TOKEN && TOKEN.indexOf('diag_') !== 0) {
 }
 
 var CARD_WIDTH_MM = 85.6;   /* ISO/IEC 7810 ID-1. Every bank card. */
-var APP_VERSION = 'diag-0.1.0+2026-09-19';
+var APP_VERSION = 'diag-0.2.0+2026-09-23';
 
 /* Layout unit used by the real session. Geometry is a fixed fraction of u, and
  * the divisors are the widest and tallest extents any screen needs in u-units,
@@ -289,6 +291,9 @@ var D = {
   mm_samples: '',
   mm_duration_ms: '',
   mm_rate_hz: '',
+  mm_rate_moving_hz: '',
+  mm_moving_ms: '',
+  mm_duty_pct: '',
   mm_median_interval_ms: '',
   mm_min_interval_ms: '',
 
@@ -426,22 +431,41 @@ $('dist').addEventListener('input', function () {
     D.mm_median_interval_ms = gaps.length ? +median(gaps).toFixed(1) : '';
     D.mm_min_interval_ms = gaps.length ? +Math.min.apply(null, gaps).toFixed(1) : '';
 
-    /* 60 Hz gives ~17 ms resolution on movement onset, which is ample.
-     * Below ~30 Hz the decision/travel split stops being trustworthy and the
-     * probe design needs revisiting before it is written. */
-    var cls = D.mm_rate_hz >= 50 ? 'ok' : (D.mm_rate_hz >= 30 ? 'warn' : 'bad');
-    var verdict = D.mm_rate_hz >= 50
+    /* THE VERDICT USES THE MEDIAN GAP, NOT THE MEAN RATE.
+     *
+     * mm_rate_hz divides the event count by WALL-CLOCK time, so any pause while
+     * the tester was not moving the mouse drags it down. The first real run
+     * reported 34.5 Hz mean against a 12 ms median gap: a 41% duty cycle, i.e.
+     * most of the window was a pause. Read as a mean it looked close to the
+     * redesign threshold; the hardware was actually reporting at ~83 Hz while
+     * moving.
+     *
+     * The median gap is what movement-onset resolution actually depends on, so
+     * that is what is judged here. Both numbers are still logged. */
+    D.mm_moving_ms = gaps.length ? Math.round(gaps.length * median(gaps)) : 0;
+    D.mm_duty_pct = dur > 0 ? +(D.mm_moving_ms / dur * 100).toFixed(0) : '';
+    D.mm_rate_moving_hz = D.mm_median_interval_ms ? +(1000 / D.mm_median_interval_ms).toFixed(1) : '';
+
+    var eff = D.mm_rate_moving_hz || 0;
+    var cls = eff >= 50 ? 'ok' : (eff >= 30 ? 'warn' : 'bad');
+    var verdict = eff >= 50
       ? 'good - decision and travel time can be separated cleanly'
-      : (D.mm_rate_hz >= 30
+      : (eff >= 30
         ? 'workable, but coarse'
         : 'too low - the decision/travel split needs rethinking');
+
+    var dutyNote = (D.mm_duty_pct !== '' && D.mm_duty_pct < 70)
+      ? ' (the mean is low only because the mouse was still for part of the test)'
+      : '';
 
     pad.textContent = 'Done. ' + D.mm_samples + ' movements recorded.';
     table($('t-mouse'), [
       ['Movement reports', D.mm_samples],
       ['Over', D.mm_duration_ms + ' ms'],
-      ['Rate', D.mm_rate_hz + ' Hz', cls],
       ['Median gap between reports', D.mm_median_interval_ms + ' ms'],
+      ['Rate while moving', eff + ' Hz', cls],
+      ['Mean rate over the window', D.mm_rate_hz + ' Hz' + dutyNote],
+      ['Moving for', D.mm_duty_pct + '% of the test'],
       ['Shortest gap', D.mm_min_interval_ms + ' ms'],
       ['Verdict', verdict, cls]
     ]);
