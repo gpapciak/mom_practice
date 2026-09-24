@@ -3,12 +3,18 @@ Thumbs.db
 node_modules/
 *.log
 
-# Never in the public repo: they describe an individual person.
+# Never in the public repo: these describe an individual person.
 docs/
 schema/
-tests/
 tools/
 apps-script/
+
+# tests/ is NOT ignored, deliberately.
+#
+# It was, at first, and that was a mistake: it meant the content gate that keeps
+# personal detail out of this repo was itself never committed here, and commit
+# messages cited check counts for files the repo did not contain. Tests describe
+# code, not a person, and tests/check_no_personal.mjs proves that on every run.
 
 # Local-only assets
 photos/
