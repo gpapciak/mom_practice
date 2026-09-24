@@ -6,20 +6,37 @@
  * timed task.
  */
 
-import { DEFAULTS, COLLECTING, GEOMETRY_FINAL, PROBES_REAL, APP_VERSION } from './config.js';
+import { DEFAULTS, COLLECTING, GEOMETRY_FINAL, NO_STUB_STAGES, APP_VERSION } from './config.js';
 import * as store from './store.js';
 import * as layout from './layout.js';
 import * as upload from './upload.js';
 import * as lifecycle from './lifecycle.js';
 import { Session } from './session.js';
+import { parseItems } from './training.js';
+
+/** Skipped rows are reported rather than swallowed: the tab is edited by hand. */
+function trainingParse(rows) {
+  const { items, skipped } = parseItems(rows);
+  if (skipped.length) debugLog(`${skipped.length} training row(s) skipped: `
+    + skipped.map(s => s.why).join('; '));
+  return items;
+}
 
 const params = new URLSearchParams(location.search);
 const DEBUG = params.get('debug') === '1';
 const SEED = params.get('seed');
+/**
+ * ?dry=1 runs a full, real session and throws the data away at the end.
+ *
+ * For rehearsing before the first real row lands, and for checking a change on the
+ * actual machine without putting a discontinuity in the series.
+ */
+const DRY = params.get('dry') === '1';
 
 const el = id => document.getElementById(id);
 
 let config = Object.assign({}, DEFAULTS);
+let trainingItems = [];
 
 async function boot() {
   // Blocking gate, not advice. If the geometry is claimed final without a measured
@@ -54,6 +71,10 @@ async function boot() {
   const cached = await store.getMeta('config');
   if (cached) config = Object.assign({}, DEFAULTS, cached);
 
+  // Training content, cache-first so a session can run with no network at all. The
+  // cache refreshes whenever the network answers.
+  trainingItems = (await store.getMeta('training_items', [])) || [];
+
   drawOpening();
 
   // Neither of these may block START.
@@ -67,6 +88,13 @@ async function boot() {
     if (DEBUG) debugLog(`outbox: sent ${res.sent}, kept ${res.kept}`);
   }).catch(() => {});
 
+  upload.fetchTraining().then(items => {
+    if (!items) return;
+    trainingItems = items;
+    store.setMeta('training_items', items);
+    if (DEBUG) debugLog(`training content: ${items.length} rows fetched`);
+  }).catch(() => {});
+
   upload.fetchConfig().then(cfg => {
     if (!cfg) return;
     config = Object.assign({}, DEFAULTS, cfg);
@@ -77,8 +105,9 @@ async function boot() {
   if (DEBUG) {
     const est = await store.storageEstimate();
     const ob = await upload.outboxSummary();
+    if (DRY) debugLog('DRY RUN — nothing will be uploaded or written back');
     debugLog(`${APP_VERSION} | collecting=${COLLECTING}`
-             + ` (probes=${PROBES_REAL} geometry=${GEOMETRY_FINAL}) | u=${layout.unit()}px`);
+             + ` (stages=${NO_STUB_STAGES} geometry=${GEOMETRY_FINAL}) | u=${layout.unit()}px`);
     debugLog(`quota ${est.quota ? Math.round(est.quota / 1048576) + 'MB' : '?'}`
              + ` | outbox ${ob.pending} pending, ${ob.quarantined} quarantined`);
     if (SEED) debugLog('seed override: ' + SEED);
@@ -110,7 +139,9 @@ function drawOpening() {
 }
 
 async function startSession() {
-  const session = new Session({ config, debug: DEBUG });
+  const session = new Session({ config, debug: DEBUG, dry: DRY });
+  // Parsed fresh each session so an edit made this morning is picked up today.
+  session.trainingItems = trainingParse(trainingItems);
   session.onReset = () => { drawOpening(); };
   await session.prepare();
   try {

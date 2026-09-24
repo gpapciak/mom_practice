@@ -450,22 +450,23 @@ section('9. collection cannot start before the geometry is final');
   const lay = await import('../app/layout.js?v=9');
 
   check('COLLECTING is derived, not a standalone switch',
-    cfg.COLLECTING === (cfg.PROBES_REAL && cfg.GEOMETRY_FINAL),
-    `${cfg.COLLECTING} vs ${cfg.PROBES_REAL} && ${cfg.GEOMETRY_FINAL}`);
-  check('it is off right now', cfg.COLLECTING === false);
+    cfg.COLLECTING === (cfg.NO_STUB_STAGES && cfg.GEOMETRY_FINAL),
+    `${cfg.COLLECTING} vs ${cfg.NO_STUB_STAGES} && ${cfg.GEOMETRY_FINAL}`);
 
   check('claiming final geometry without a measured extent is refused',
-    lay.geometryProblem(true) !== null, String(lay.geometryProblem(true)));
+    lay.geometryProblem(true, null) !== null, String(lay.geometryProblem(true, null)));
   check('and is accepted once an extent is recorded',
     lay.geometryProblem(true, 0.55) === null, String(lay.geometryProblem(true, 0.55)));
   check('not-final needs nothing', lay.geometryProblem(false) === null);
 
   // The invariant that matters: flipping one flag is not enough.
-  const would = (probes, geom, extent) =>
-    probes && geom && lay.geometryProblem(geom, extent) === null;
-  check('flipping PROBES_REAL alone does not enable collection', would(true, false, null) === false);
-  check('flipping GEOMETRY_FINAL alone does not enable collection', would(false, true, 0.55) === false);
-  check('both flags plus a measured extent does', would(true, true, 0.55) === true);
+  const would = (stages, geom, extent) =>
+    stages && geom && lay.geometryProblem(geom, extent) === null;
+  check('flipping NO_STUB_STAGES alone would not enable collection', would(true, false, null) === false);
+  check('flipping GEOMETRY_FINAL alone would not enable collection', would(false, true, 0.55) === false);
+  check('both, plus a measured extent, does', would(true, true, 0.55) === true);
+  check('and GEOMETRY_FINAL with no extent behind it is still refused',
+    lay.geometryProblem(true, null) !== null);
 }
 
 /* =========================================== 10. Probe A frozen parameters */
@@ -815,11 +816,107 @@ section('19. a screen that overflows is caught, not trusted not to');
 
   // The gate this feeds: geometry may only be declared final with a real number.
   check('the extent gate still refuses an unbacked claim',
-    layout.geometryProblem(true) !== null);
+    layout.geometryProblem(true, null) !== null,
+    String(layout.geometryProblem(true, null)));
   check('and accepts a measured one', layout.geometryProblem(true, 0.60) === null);
   check('but refuses a measurement that leaves no margin',
     layout.geometryProblem(true, 0.90) !== null,
     String(layout.geometryProblem(true, 0.90)));
+}
+
+
+/* ======================================= 20. the frozen session skeleton */
+
+section('20. the skeleton: probe positions and session length do not move');
+{
+  installBrowser();
+  const S = await import('../app/session.js?v=20');
+  const train = await import('../app/probe_training.js?v=20');
+
+  const sk = S.SKELETON;
+
+  // THE ASSERTION THIS FILE EXISTS FOR. crt_1 and crt_2 must sit at the same
+  // elapsed time in both phases, because crt_2 - crt_1 is the fatigue measure and
+  // it means nothing if the blocks move or the session changes length.
+  const cum = phase => {
+    let t = 0;
+    const at = {};
+    for (const sl of sk) {
+      const stage = sl[phase];
+      if (stage === 'crt_1' || stage === 'crt_2') at[stage] = t;
+      t += sl.ms || 0;
+    }
+    return { at, total: t };
+  };
+  const p1 = cum('phase1');
+  const p2 = cum('phase2');
+
+  check('crt_1 sits at the same elapsed time in both phases',
+    p1.at.crt_1 === p2.at.crt_1, `${p1.at.crt_1} vs ${p2.at.crt_1}`);
+  check('crt_2 sits at the same elapsed time in both phases',
+    p1.at.crt_2 === p2.at.crt_2, `${p1.at.crt_2} vs ${p2.at.crt_2}`);
+  check('the session is the same length in both phases',
+    p1.total === p2.total, `${p1.total} vs ${p2.total}`);
+  check('and the gap the fatigue measure spans is identical',
+    (p1.at.crt_2 - p1.at.crt_1) === (p2.at.crt_2 - p2.at.crt_1));
+
+  // Only the OCCUPANT of a slot may differ between phases.
+  check('every slot keeps its duration across phases',
+    sk.every(sl => typeof sl.ms === 'number' || sl.ms === null));
+  check('the blocks occupy the same slots in both phases',
+    sk.filter(sl => sl.phase1.startsWith('crt')).map(sl => sl.slot).join() ===
+    sk.filter(sl => sl.phase2.startsWith('crt')).map(sl => sl.slot).join());
+
+  // The invariant that keeps Probe B's series free of training data.
+  const probeStages = ['opening_recognition', 'encoding', 'recognition_short',
+                       'recognition_medium'];
+  check('no training stage ever borrows a probe stage name',
+    sk.every(sl => !(sl.phase1.startsWith('training') && probeStages.includes(sl.phase1))),
+    sk.map(sl => sl.phase1).join());
+  check('every slot occupant is a declared stage name',
+    sk.every(sl => S.STAGES.includes(sl.phase1) && S.STAGES.includes(sl.phase2)),
+    sk.map(sl => `${sl.phase1}/${sl.phase2}`).join(' '));
+
+  // Phase 1 fills the probe slots with training; phase 2 moves it to the fillers.
+  check('phase 1 puts training in the Probe B and C slots',
+    S.trainingBudgetMs('phase1') === 310000, String(S.trainingBudgetMs('phase1')));
+  check('phase 2 moves training into the filler slots',
+    S.trainingBudgetMs('phase2') === 165000, String(S.trainingBudgetMs('phase2')));
+  check('so the training dose drops when the probes arrive, as expected',
+    S.trainingBudgetMs('phase2') < S.trainingBudgetMs('phase1'));
+
+  // Training fills its slots and never overruns them.
+  check('capacity is derived from the slot budget',
+    train.capacityFor(310000) === 17, String(train.capacityFor(310000)));
+  check('and from the smaller phase-2 budget',
+    train.capacityFor(165000) === 9, String(train.capacityFor(165000)));
+  check('a slot too short for one item yields none, not a partial item',
+    train.capacityFor(5000) === 0);
+}
+
+section('21. geometry is final, and backed by a number');
+{
+  installBrowser({ w: 1409, h: 686 });
+  const cfg = await import('../app/config.js?v=21');
+  const lay = await import('../app/layout.js?v=21');
+
+  check('a measured extent is recorded', typeof lay.MEASURED_CONTENT_EXTENT_U === 'number',
+    String(lay.MEASURED_CONTENT_EXTENT_U));
+  check('and it leaves margin inside the budget',
+    lay.MEASURED_CONTENT_EXTENT_U < lay.CONTENT_BUDGET_U,
+    `${lay.MEASURED_CONTENT_EXTENT_U} vs ${lay.CONTENT_BUDGET_U}`);
+  check('so the geometry gate is satisfied',
+    lay.geometryProblem(cfg.GEOMETRY_FINAL) === null,
+    String(lay.geometryProblem(cfg.GEOMETRY_FINAL)));
+  check('COLLECTING is still derived from both flags',
+    cfg.COLLECTING === (cfg.NO_STUB_STAGES && cfg.GEOMETRY_FINAL));
+
+  // The tallest screen that will ever run must still fit.
+  const u = lay.unit();
+  const tallest = { scrollHeight: Math.round(lay.MEASURED_CONTENT_EXTENT_U * u) };
+  check('the tallest anticipated screen fits at the measured viewport',
+    lay.measureScreen(tallest, u).fits === true,
+    JSON.stringify(lay.measureScreen(tallest, u)));
 }
 
 

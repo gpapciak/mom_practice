@@ -163,6 +163,56 @@ export async function fetchConfig({ timeoutMs = 3000 } = {}) {
   }
 }
 
+/**
+ * The training content. Cached locally so a session still has content offline; the
+ * cache is refreshed whenever the network answers.
+ *
+ * Not gated by COLLECTING. That flag protects the canonical trial tables from
+ * placeholder data; it has nothing to do with whether the practice half can run.
+ */
+export async function fetchTraining({ timeoutMs = 5000 } = {}) {
+  if (!TOKEN) return null;
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    const url = ENDPOINT + '?action=training&token=' + encodeURIComponent(TOKEN);
+    const res = await fetch(url, { signal: ctl.signal });
+    const json = await res.json();
+    return json && json.ok ? json.items : null;
+  } catch (e) {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Writes the schedule back: interval, last tested, exposures, streak. Never the
+ * prompt or the answer, which belong to whoever wrote them.
+ *
+ * Also not gated by COLLECTING, and for the same reason. If this never ran, every
+ * item would stay at its starting interval forever and the practice would quietly
+ * stop being spaced retrieval at all.
+ */
+export async function postTrainingProgress(updates) {
+  if (!updates || !updates.length || !TOKEN) return { ok: false, skipped: true };
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const res = await fetch(ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': CONTENT_TYPE },
+      body: JSON.stringify({ token: TOKEN, kind: 'training_progress', updates }),
+      signal: ctl.signal
+    });
+    return await res.json();
+  } catch (e) {
+    return { ok: false, retryable: true, error: String(e) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function outboxSummary() {
   const all = await store.allOutbox();
   return {

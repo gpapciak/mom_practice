@@ -47,8 +47,10 @@ if (!TOKEN.startsWith('app_')) {
  * comparable to one collected at another, and the divisors are still provisional
  * until measured against real screens rather than an estimate of them.
  *
- * PROBES_REAL     the probes emit real trials rather than stubs. While false, one
- *                 placeholder row in the canonical trial table would be
+ * NO_STUB_STAGES  every stage that RUNS emits real trials. Named for what it
+ *                 actually guarantees: in phase 1 Probes B and C do not run at all,
+ *                 so their absence is not a stub. What must never happen is a
+ *                 placeholder row in the canonical trial table, which would be
  *                 indistinguishable from real data later.
  *
  * GEOMETRY_FINAL  the layout divisors have been set from the measured vertical
@@ -59,9 +61,9 @@ if (!TOKEN.startsWith('app_')) {
  * Flipping either one by itself changes nothing. Both, plus a recorded measurement,
  * are required.
  */
-export const PROBES_REAL = false;
-export const GEOMETRY_FINAL = false;
-export const COLLECTING = PROBES_REAL && GEOMETRY_FINAL;
+export const NO_STUB_STAGES = true;
+export const GEOMETRY_FINAL = true;
+export const COLLECTING = NO_STUB_STAGES && GEOMETRY_FINAL;
 
 /**
  * Compiled-in config defaults. The Sheet's config tab can override these, but the
@@ -81,7 +83,7 @@ export const DEFAULTS = {
  * live here rather than in the Sheet precisely so that changing one leaves a
  * trace in the data.
  */
-export const APP_VERSION = '0.2.0-shell+2026-09-23';
+export const APP_VERSION = '1.0.0-phase1+2026-09-24';
 
 /**
  * Filler durations set the nominal retention delays. Deliberately NOT remotely

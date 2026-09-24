@@ -28,14 +28,54 @@ import * as speech from './speech.js';
 import * as upload from './upload.js';
 import * as lifecycle from './lifecycle.js';
 import * as crt from './probe_crt.js';
+import * as train from './probe_training.js';
+import * as training from './training.js';
+
+/**
+ * THE SESSION SKELETON. Frozen from the first collected row.
+ *
+ * The durations, and the positions of the two reaction-time blocks, are the
+ * instrument. `crt_2 - crt_1` is the fatigue measure, and it means something only
+ * while the blocks sit at the same points in the same-length session every day.
+ *
+ * What changes between phases is only WHICH stage occupies a slot:
+ *
+ *   phase 1 (now)   training fills the Probe B and C slots; the fillers stay fillers
+ *   phase 2 (later) the probes take their slots back and training moves to the
+ *                   fillers, as originally designed
+ *
+ * Because the slots keep their durations, the two blocks stay at identical elapsed
+ * times across that change. The discontinuity is reduced to a change in the KIND of
+ * work between them, not its duration or position — which is what makes phasing
+ * cheap rather than ruinous. It is still a step, and it still needs a phase term in
+ * any model that spans it.
+ */
+export const SKELETON = [
+  { slot: 'opening', ms: 100000, phase1: 'training_1', phase2: 'opening_recognition' },
+  { slot: 'crt_1',   ms: null,   phase1: 'crt_1',      phase2: 'crt_1' },
+  { slot: 'encode',  ms: 110000, phase1: 'training_2', phase2: 'encoding' },
+  { slot: 'fill_1',  ms: 75000,  phase1: 'filler_1',   phase2: 'training_1' },
+  { slot: 'recog_s', ms: 50000,  phase1: 'training_3', phase2: 'recognition_short' },
+  { slot: 'fill_2',  ms: 90000,  phase1: 'filler_2',   phase2: 'training_2' },
+  { slot: 'recog_m', ms: 50000,  phase1: 'training_4', phase2: 'recognition_medium' },
+  { slot: 'crt_2',   ms: null,   phase1: 'crt_2',      phase2: 'crt_2' }
+];
 
 /** Frozen stage names. Filler produces no trial rows. */
 export const STAGES = [
   'greeting', 'company_question',
   'opening_recognition', 'crt_1', 'encoding',
   'filler_1', 'recognition_short', 'filler_2', 'recognition_medium',
-  'crt_2', 'close'
+  'crt_2', 'close',
+  'training_1', 'training_2', 'training_3', 'training_4'
 ];
+
+/** Total training time available in a phase, used to size the due-item queue. */
+export function trainingBudgetMs(phase) {
+  return SKELETON
+    .filter(sl => sl[phase].startsWith('training'))
+    .reduce((n, sl) => n + (sl.ms || 0), 0);
+}
 
 const el = id => document.getElementById(id);
 const screen = () => el('screen');
@@ -100,9 +140,11 @@ function choose(nodes, opts) {
 /* ---------------------------------------------------------------- Session */
 
 export class Session {
-  constructor({ config, debug }) {
+  constructor({ config, debug, dry }) {
     this.config = Object.assign({}, DEFAULTS, config || {});
     this.debug = !!debug;
+    /** A dry run does everything except persist. For rehearsing on the real machine. */
+    this.dry = !!dry;
 
     this.uid = store.uuid();
     this.openedAt = Date.now();
@@ -135,6 +177,14 @@ export class Session {
     this.duringN = 0;
     this.trialOpen = false;
     this.veiled = false;
+
+    // Probes B and C are not built yet, so this is phase 1. Derived rather than
+    // configured: when they exist, this flips by itself and no flag can be left
+    // stale. The phase is also recoverable from the data - a session either has
+    // B_recognition rows or it does not - so nothing depends on trusting it.
+    this.phase = 'phase1';
+    this.trainingQueue = [];
+    this.trainingProgress = new Map();
 
     const g = layout.apply();
     this.stagePx = g.u;
@@ -278,6 +328,7 @@ export class Session {
     if (!this.trialBuffer.length) return;
     const rows = this.trialBuffer;
     this.trialBuffer = [];
+    if (this.dry) { this.log(`dry run: discarded ${rows.length} trial row(s)`); return; }
     await store.putTrials(rows);
   }
 
@@ -342,7 +393,7 @@ export class Session {
 
     // Written before anything else, so an open that goes nowhere is still on the
     // record. never_started is the single most informative value in that table.
-    await store.putSession(this.sessionRow('never_started'));
+    if (!this.dry) await store.putSession(this.sessionRow('never_started'));
   }
 
   /* ---------------- the run ---------------- */
@@ -350,6 +401,15 @@ export class Session {
   async run() {
     this.seq = await store.nextSessionSeq();
     this.startedAt = Date.now();
+
+    // Built once per session, not per slot, so an item is never asked twice in a
+    // session and a missed item's re-ask can land in a later slot. Sized by the
+    // phase's total training time: training fills its slots and never overruns them.
+    const cap = train.capacityFor(trainingBudgetMs(this.phase));
+    this.trainingQueue = training.buildQueue(
+      this.trainingItems || [], Date.now(), cap, this.seed + ':training');
+    this.log(`training: ${this.trainingQueue.length} due of ${(this.trainingItems || []).length}`
+             + `, cap ${cap}`);
 
     this.watcher = lifecycle.watch({
       getState: () => ({ session_uid: this.uid, stage: this.stage }),
@@ -365,12 +425,10 @@ export class Session {
       await this.doCompanyQuestion();
       if (this.ended) return;
 
-      for (const stage of ['opening_recognition', 'crt_1', 'encoding',
-                           'filler_1', 'recognition_short',
-                           'filler_2', 'recognition_medium', 'crt_2']) {
+      for (const slot of SKELETON) {
         if (this.ended) return;
-        this.stage = stage;
-        await this.doStage(stage);
+        this.stage = slot[this.phase];
+        await this.doStage(this.stage, slot);
         await this.flush();          // stage boundary: dead time, safe to write
       }
 
@@ -391,14 +449,29 @@ export class Session {
     if (this.watcher) this.watcher.stop();
     await this.flush();
 
-    const rows = await store.trialsForSession(this.uid);
     const sessionRow = this.sessionRow(reason);
+    if (this.dry) {
+      this.log(`dry run: session NOT recorded (${this.nTrials} trials discarded)`);
+      lifecycle.clearAlive();
+      return;
+    }
+    const rows = await store.trialsForSession(this.uid);
     await store.putSession(sessionRow);
     await upload.enqueue(rows, [sessionRow]);
 
     lifecycle.clearAlive();
     // After the closing screen is already up, so never in a timed path.
     upload.drain().catch(() => {});
+
+    // The schedule write-back is NOT gated by COLLECTING: that flag protects the
+    // canonical trial tables from placeholder data, and has nothing to do with
+    // whether the practice half advances. Without this every item would stay at its
+    // starting interval forever and it would stop being spaced retrieval at all.
+    if (this.trainingProgress.size && !this.dry) {
+      upload.postTrainingProgress([...this.trainingProgress.values()])
+        .then(r => this.log('training progress: ' + JSON.stringify(r)))
+        .catch(() => {});
+    }
     this.log(`session ended: ${reason}, ${this.nTrials} trials`);
   }
 
@@ -456,25 +529,35 @@ export class Session {
    * no trial rows, because no probe ran and a placeholder row would be
    * indistinguishable from real data later.
    */
-  async doStage(stage) {
-    // Probe A is real. The two blocks are identical in every parameter and differ
-    // only in when they occur: their difference is the fatigue measure.
+  async doStage(stage, slot) {
+    // Probe A. The two blocks are identical in every parameter and differ only in
+    // when they occur: their difference is the fatigue measure.
     if (stage === 'crt_1' || stage === 'crt_2') {
       await crt.run(this, { screenEl: screen(), seed: this.seed + ':' + stage });
+      this.checkFits(stage);
       return;
     }
-    const filler = stage.startsWith('filler');
-    const ms = stage === 'filler_1' ? TIMING.filler_1_ms
-             : stage === 'filler_2' ? TIMING.filler_2_ms
-             : this.debug ? 1200 : 6000;
 
-    screen().innerHTML = filler
-      ? `<div class="pane"><p class="lead">Take a look at these.</p>
-           <p class="sub">${this.debug ? stage + ' — ' + ms + 'ms' : ''}</p></div>`
-      : `<div class="pane"><p class="lead">Just a moment.</p>
-           <p class="sub">${this.debug ? stage : ''}</p></div>`;
+    if (stage.startsWith('training')) {
+      const n = await train.runSlot(this, {
+        screenEl: screen(), stage,
+        slotMs: this.debug ? Math.min(slot.ms, 40000) : slot.ms
+      });
+      this.checkFits(stage);
+      this.log(`${stage}: ${n} items, ${this.trainingQueue.length} left in queue`);
+      return;
+    }
 
-    await wait(this.debug && filler ? 1500 : ms);
+    // Filler: low-demand, pleasant, non-verbal, and NOT a memory task - it must not
+    // interfere with what is being retained. Photographs go here once imported.
+    const ms = stage === 'filler_1' ? TIMING.filler_1_ms : TIMING.filler_2_ms;
+    screen().innerHTML = `
+      <div class="pane">
+        <p class="lead">Take a look at these.</p>
+        <p class="sub">${this.debug ? stage + ' — ' + ms + 'ms' : ''}</p>
+      </div>`;
+    this.checkFits(stage);
+    await wait(this.debug ? 2000 : ms);
   }
 
   /** Warm, brief, no summary of performance. */

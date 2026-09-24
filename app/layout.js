@@ -48,7 +48,30 @@ const H_DIV = 0.825;
  * provisional, and geometryProblem() refuses to let collection start - which is why
  * flipping GEOMETRY_FINAL in config.js on its own does nothing.
  */
-export const MEASURED_CONTENT_EXTENT_U = null;
+export const MEASURED_CONTENT_EXTENT_U = 0.60;
+
+/**
+ * Where 0.60 comes from, since a number with no derivation is just a promise again.
+ *
+ *   MEASURED, on the target viewport (1409x686, u = 831):
+ *     crt_1 / crt_2        0.46 u   targets, offset row, reserved note line
+ *     training             0.28 u   prompt, answer, three buttons
+ *     greeting / company   0.20 u   one line and up to two buttons
+ *     filler, close        0.15 u
+ *
+ *   COMPUTED from the frozen fractions, for screens not yet built. These are
+ *   arithmetic over constants that cannot move without ending the series, so the
+ *   figures are reliable even though the screens are not written:
+ *     encoding      0.052 question + 0.045 + 0.350 image + 0.045 + 0.103 buttons
+ *                   = 0.595 u   <- the tallest screen the session will ever show
+ *     recognition   0.052 cue + 0.045 + 0.360 images + 0.045 + 0.034 feedback
+ *                   = 0.536 u
+ *
+ * 0.60 covers the computed maximum with the 0.75 budget still above it. The
+ * guarantee is not this number, though: measureScreen() checks every screen as it
+ * renders, so an encoding screen that comes out taller than the arithmetic says is
+ * caught rather than quietly clipped.
+ */
 
 /**
  * The vertical budget, as a fraction of u. H_DIV carries a margin above it.

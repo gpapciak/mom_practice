@@ -231,3 +231,31 @@ button.big:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px
      targets. Nothing may move between trials. */
   min-height: calc(var(--u) * 0.045);
 }
+
+/*
+ * Training screens.
+ *
+ * Text-only, so this is the shortest screen in the session. The answer is styled as
+ * the thing to read, not as a verdict: no colour signals success or failure, because
+ * a miss is answered rather than marked.
+ */
+.pane.train { gap: calc(var(--u) * 0.038); }
+
+.pane.train .answer {
+  font-weight: 600;
+  max-width: calc(var(--u) * 1.05);
+}
+
+.pane.train .warm {
+  min-height: calc(var(--u) * 0.045);   /* reserved, so nothing shifts on reveal */
+}
+
+/* Three options need slightly tighter spacing than two, still with real dead space
+   between them: nothing here should punish an imprecise click. */
+.choices.three {
+  gap: calc(var(--u) * 0.075);
+}
+
+.choices.three button.big {
+  min-width: calc(var(--u) * 0.215);
+}
