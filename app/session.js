@@ -488,6 +488,25 @@ export class Session {
     await wait(2500);
   }
 
+  /**
+   * Checks that whatever just rendered fits the vertical budget.
+   *
+   * The session must never scroll, and an overflowing screen is worse than an ugly
+   * one: part of the stimulus is simply absent and nothing says so. Enforced rather
+   * than assumed, which is what allows the geometry to be declared final before
+   * every screen has been built by hand.
+   */
+  checkFits(label) {
+    const pane = screen().querySelector('.pane, .crt') || screen().firstElementChild;
+    const m = layout.measureScreen(pane, this.stagePx);
+    if (!m.fits) {
+      this.overflows = (this.overflows || []).concat([{ label, ...m }]);
+      this.log(`SCREEN OVERFLOW ${label}: ${m.extentU}u, ${m.overflowPx}px over budget`);
+    }
+    if (m.extentU > (this.maxExtentU || 0)) this.maxExtentU = m.extentU;
+    return m;
+  }
+
   log(msg) {
     if (!this.debug) return;
     const box = el('debug');

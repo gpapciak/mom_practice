@@ -51,6 +51,42 @@ const H_DIV = 0.825;
 export const MEASURED_CONTENT_EXTENT_U = null;
 
 /**
+ * The vertical budget, as a fraction of u. H_DIV carries a margin above it.
+ *
+ * Every screen must render inside this. assertFits() enforces it at runtime rather
+ * than trusting that someone measured, which is what lets GEOMETRY_FINAL be claimed
+ * before every screen exists: the guarantee is a check, not a promise.
+ */
+export const CONTENT_BUDGET_U = 0.75;
+
+/**
+ * Measures a rendered screen and reports whether it fits, in units of u.
+ *
+ * Returns { extentU, fits, overflowPx }. Called after each screen paints. A screen
+ * that does not fit is the one failure this layout may not have: the session must
+ * never scroll, and an overflowing stimulus is worse than an ugly one because part
+ * of it is simply not there and nothing says so.
+ */
+export function measureScreen(node, u) {
+  if (!node) return { extentU: 0, fits: true, overflowPx: 0 };
+  const unit = u || unitFromDom();
+  // scrollHeight, not clientHeight: clientHeight is what fits, scrollHeight is what
+  // is actually there. The difference is precisely the part that would be cut off.
+  const h = node.scrollHeight || 0;
+  const budgetPx = CONTENT_BUDGET_U * unit;
+  return {
+    extentU: unit ? +(h / unit).toFixed(4) : 0,
+    fits: h <= budgetPx,
+    overflowPx: Math.max(0, Math.round(h - budgetPx))
+  };
+}
+
+function unitFromDom() {
+  const v = getComputedStyle(document.documentElement).getPropertyValue('--u');
+  return parseFloat(v) || unit();
+}
+
+/**
  * Returns null if the geometry may be treated as final, or a reason string if not.
  * Called at boot; a non-null reason blocks collection regardless of config flags.
  */

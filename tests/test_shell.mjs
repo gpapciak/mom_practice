@@ -258,8 +258,18 @@ section('4. layout geometry against the real measured viewport');
 section('5. column contract');
 {
   const cols = await import('../app/columns.js');
-  check('trial columns present', cols.TRIAL_COLUMNS.length === 66, String(cols.TRIAL_COLUMNS.length));
-  check('session columns present', cols.SESSION_COLUMNS.length === 36, String(cols.SESSION_COLUMNS.length));
+  // Deliberately NOT an exact count. An exact count encodes no invariant - the
+  // schema is append-only, so it grows by design - and it failed three times in a
+  // row purely because it had to be hand-edited after each append, never once
+  // catching a real problem. A lower bound still catches a truncated or
+  // half-regenerated columns.js, which is the failure that would matter.
+  check('trial columns look complete', cols.TRIAL_COLUMNS.length >= 66,
+    String(cols.TRIAL_COLUMNS.length));
+  check('session columns look complete', cols.SESSION_COLUMNS.length >= 36,
+    String(cols.SESSION_COLUMNS.length));
+  check('the last trial column is not a truncation artefact',
+    /^[a-z][a-z0-9_]*$/.test(cols.TRIAL_COLUMNS[cols.TRIAL_COLUMNS.length - 1]),
+    cols.TRIAL_COLUMNS[cols.TRIAL_COLUMNS.length - 1]);
   check('trial_uid is first', cols.TRIAL_COLUMNS[0] === 'trial_uid');
   check('no duplicate trial columns',
     new Set(cols.TRIAL_COLUMNS).size === cols.TRIAL_COLUMNS.length);
@@ -281,6 +291,10 @@ section('5. column contract');
   check('training shares the stream without borrowing a probe stage name',
     cols.TRIAL_COLUMNS.includes('training_interval_days') &&
     cols.TRIAL_COLUMNS.includes('training_is_retest'));
+  check('the three-way self-report has its own column, separate from correct',
+    cols.TRIAL_COLUMNS.includes('training_recall') &&
+    cols.TRIAL_COLUMNS.includes('training_reveal_latency_ms') &&
+    cols.TRIAL_COLUMNS.includes('training_max_interval_days'));
 }
 
 /* ============================================================ 6. localDate */
@@ -607,23 +621,57 @@ section('15. training - expanding intervals');
   installBrowser();
   const tr = await import('../app/training.js');
 
+  const R = tr.RECALL;
+  const step = (days, recall, opts) => tr.nextInterval(days, recall, opts).interval_days;
+
   check('steps are the standard expanding schedule',
     JSON.stringify(tr.STEPS) === JSON.stringify([1, 2, 4, 7, 14, 30, 60]));
-  check('success steps up', tr.nextInterval(2, true) === 4, String(tr.nextInterval(2, true)));
-  check('success at the top stays at the top', tr.nextInterval(60, true) === 60);
+  check('a clean success steps up', step(2, R.GOT) === 4, String(step(2, R.GOT)));
 
-  // A miss drops two steps rather than resetting. Resetting after one lapse gives
-  // long runs of the same item, which makes the errorless property hard to hold.
+  // THE BRAKE THAT MATTERS: partial recall holds. Collapsing 'partly' into 'got it'
+  // is what pushes intervals up fastest, and over-reporting is the expected failure
+  // mode when awareness of deficit may itself be affected.
+  check('PARTLY holds the interval rather than extending it',
+    step(4, R.PARTLY) === 4, String(step(4, R.PARTLY)));
+  check('partly is not treated as a miss either',
+    step(4, R.PARTLY) > step(4, R.MISSED), `${step(4, R.PARTLY)} vs ${step(4, R.MISSED)}`);
+
   check('a miss drops two steps, not to the start',
-    tr.nextInterval(14, false) === 4, String(tr.nextInterval(14, false)));
+    step(14, R.MISSED) === 4, String(step(14, R.MISSED)));
   check('and never below the first step',
-    tr.nextInterval(1, false) === 1 && tr.nextInterval(2, false) === 1);
+    step(1, R.MISSED) === 1 && step(2, R.MISSED) === 1);
+  check('an omission is scheduled like a miss, since no retrieval happened',
+    step(14, R.OMITTED) === step(14, R.MISSED));
+
+  // The streak gate: one optimistic report cannot carry an item far.
+  check('beyond a week, a single success does NOT advance',
+    step(7, R.GOT, { streak: 0 }) === 7, String(step(7, R.GOT, { streak: 0 })));
+  check('two consecutive successes do',
+    step(7, R.GOT, { streak: 1 }) === 14, String(step(7, R.GOT, { streak: 1 })));
+  check('below the gate one success is enough',
+    step(4, R.GOT, { streak: 0 }) === 7);
+  check('a partial resets the streak',
+    tr.nextInterval(4, R.PARTLY, { streak: 3 }).streak === 0);
+  check('a success builds it',
+    tr.nextInterval(4, R.GOT, { streak: 1 }).streak === 2);
+
+  // The ceiling, and the volatile-content case that motivates it.
+  check('the default ceiling is well below the top step',
+    tr.DEFAULT_MAX_INTERVAL_DAYS === 21);
+  check('growth stops at the ceiling',
+    step(14, R.GOT, { streak: 5 }) === 21, String(step(14, R.GOT, { streak: 5 })));
+  check('a volatile item is capped where the human said',
+    step(2, R.GOT, { streak: 5, maxDays: 2 }) === 2,
+    String(step(2, R.GOT, { streak: 5, maxDays: 2 })));
+  check('a stable item may be allowed higher than the default',
+    step(21, R.GOT, { streak: 5, maxDays: 60 }) === 30,
+    String(step(21, R.GOT, { streak: 5, maxDays: 60 })));
 
   // The tab is edited by hand: a typo must not drop an item out of rotation.
-  check('an off-schedule interval snaps down to a real step, not out of rotation',
-    tr.nextInterval(5, true) === 7, String(tr.nextInterval(5, true)));
-  check('an absurd interval still yields a real step',
-    tr.STEPS.includes(tr.nextInterval(999, false)), String(tr.nextInterval(999, false)));
+  check('an off-schedule interval snaps down to a real step',
+    step(5, R.GOT, { streak: 5 }) === 7, String(step(5, R.GOT, { streak: 5 })));
+  check('an absurd interval still yields a real, capped step',
+    step(999, R.MISSED) <= 21 && step(999, R.MISSED) > 0, String(step(999, R.MISSED)));
 }
 
 section('16. training - selection is due-based and slot-capped');
@@ -634,6 +682,8 @@ section('16. training - selection is due-based and slot-capped');
   const now = 1790000000000;
 
   const items = [
+    { item_id: 't:volatile', prompt: 'p', answer: 'a', interval_days: 14, max_interval_days: 1,
+      last_tested_ms: now - 2 * DAY },
     { item_id: 't:a', prompt: 'p', answer: 'a', interval_days: 1, last_tested_ms: now - 3 * DAY },
     { item_id: 't:b', prompt: 'p', answer: 'a', interval_days: 1, last_tested_ms: now - 2 * DAY },
     { item_id: 't:c', prompt: 'p', answer: 'a', interval_days: 7, last_tested_ms: now - 1 * DAY },
@@ -647,6 +697,10 @@ section('16. training - selection is due-based and slot-capped');
   check('a parked item never appears', !ids.includes('t:off'), ids.join(','));
   check('a brand new item is introduced immediately', ids.includes('t:new'), ids.join(','));
   check('the most overdue leads', ids[0] === 't:new' || ids[0] === 't:a', ids.join(','));
+  // A volatile item whose stored interval drifted above its ceiling must still come
+  // due on its ceiling, not on the stale number.
+  check('a per-item ceiling governs when an item is due, not the stored interval',
+    ids.includes('t:volatile'), ids.join(','));
 
   // Training expands to fill its slots and never beyond them: a longer session
   // would change what the reaction-time bracket is measuring.
@@ -722,6 +776,52 @@ section('18. training and probe content can never overlap');
   check('an empty tab is survivable', tr.parseItems([]).items.length === 0);
   check('so is a missing tab', tr.parseItems(null).items.length === 0);
 }
+
+/* ================================ 19. the runtime extent assertion */
+
+section('19. a screen that overflows is caught, not trusted not to');
+{
+  installBrowser({ w: 1409, h: 686 });
+  const layout = await import('../app/layout.js?v=19');
+  const u = 831;
+
+  check('the budget is the documented fraction', layout.CONTENT_BUDGET_U === 0.75);
+
+  // scrollHeight, not clientHeight. clientHeight is what fits; scrollHeight is what
+  // is actually there, and the difference is exactly the part that would be cut off
+  // with nothing to say so.
+  const comfortable = { scrollHeight: Math.round(0.46 * u) };   // the CRT screen
+  let m = layout.measureScreen(comfortable, u);
+  check('a comfortable screen fits', m.fits === true, JSON.stringify(m));
+  check('and its extent is reported in units of u',
+    Math.abs(m.extentU - 0.46) < 0.002, String(m.extentU));
+
+  const exact = { scrollHeight: Math.round(0.75 * u) };
+  check('a screen exactly at budget fits', layout.measureScreen(exact, u).fits === true);
+
+  // THE ADVERSARIAL CASE: plant a screen that does not fit, confirm it is caught.
+  const overflowing = { scrollHeight: Math.round(0.92 * u) };
+  m = layout.measureScreen(overflowing, u);
+  check('a planted oversized screen is CAUGHT', m.fits === false, JSON.stringify(m));
+  check('and the overflow is quantified, not merely flagged',
+    m.overflowPx > 100 && m.overflowPx < 200, String(m.overflowPx));
+
+  // Near-misses are the ones that would otherwise be waved through.
+  const barely = { scrollHeight: Math.round(0.75 * u) + 3 };
+  check('even a 3px overflow fails', layout.measureScreen(barely, u).fits === false,
+    JSON.stringify(layout.measureScreen(barely, u)));
+
+  check('a missing node is not an overflow', layout.measureScreen(null, u).fits === true);
+
+  // The gate this feeds: geometry may only be declared final with a real number.
+  check('the extent gate still refuses an unbacked claim',
+    layout.geometryProblem(true) !== null);
+  check('and accepts a measured one', layout.geometryProblem(true, 0.60) === null);
+  check('but refuses a measurement that leaves no margin',
+    layout.geometryProblem(true, 0.90) !== null,
+    String(layout.geometryProblem(true, 0.90)));
+}
+
 
 console.log('\n' + (fail === 0 ? `ALL ${pass} CHECKS PASSED` : `${pass} passed, ${fail} FAILED`));
 process.exit(fail === 0 ? 0 : 1);

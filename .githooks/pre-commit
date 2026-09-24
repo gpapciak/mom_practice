@@ -1,0 +1,26 @@
+#!/bin/sh
+#
+# Blocks a commit that would publish personal, clinical or locating content.
+#
+# This hook exists because running the check manually failed twice, in the same way
+# both times: the scan was chained after some other command, its non-zero exit was
+# swallowed, and the commit proceeded. Writing down the rule "run it separately and
+# read the result" did not prevent the second occurrence.
+#
+# So it is no longer a matter of remembering. The check runs here, and a non-zero
+# exit stops the commit.
+#
+# Enabled by:  git config core.hooksPath .githooks
+# Bypassed by: git commit --no-verify   (which should essentially never be right)
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "pre-commit: node not found; cannot run the content gate." >&2
+  exit 1
+fi
+
+if ! node tests/check_no_personal.mjs; then
+  echo "" >&2
+  echo "pre-commit: BLOCKED. The lines above must not be published." >&2
+  echo "Rewrite them generically, or move the file to the private repository." >&2
+  exit 1
+fi
