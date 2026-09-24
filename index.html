@@ -14,6 +14,14 @@
   -->
   <main id="screen" aria-live="polite"></main>
 
+  <!--
+    Blocking veil. Raised the instant the page is hidden or a freeze is detected,
+    BEFORE the interruption has been classified, so a stale stimulus cannot be
+    answered in the window between the machine waking and the detector noticing.
+    Covers the whole viewport and swallows pointer events.
+  -->
+  <div id="veil" hidden aria-hidden="true"><p>One moment.</p></div>
+
   <!-- Only ever shown with ?debug=1. -->
   <pre id="debug" hidden></pre>
 

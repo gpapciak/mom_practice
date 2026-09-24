@@ -39,6 +39,24 @@
  * in the abandoned session stay queued and are tested later at their true elapsed
  * delay, which delay_actual_ms records truthfully — so an abandoned session costs
  * a few trials, never the integrity of the series.
+ *
+ * THE STALE-STIMULUS WINDOW
+ * -------------------------
+ * Between the machine waking and the heartbeat noticing, the last stimulus screen
+ * is still on display with live click handlers under it. That is exactly what
+ * someone would try to answer, and it would produce a real-looking trial row with
+ * a latency of however long the lid was shut.
+ *
+ * Two independent guards, because neither is sufficient alone:
+ *
+ *   onSuspend()  fires the moment the page goes hidden — BEFORE any freeze — so a
+ *                blocking veil is already in place when the page comes back. This
+ *                covers tab switches and window occlusion.
+ *
+ *   isStale()    answers "has the clock jumped since the last heartbeat?" with no
+ *                dependence on any event firing at all. Response handlers consult
+ *                it before accepting a click, which covers a bare freeze where no
+ *                visibility event ever arrives. This is the real backstop.
  */
 
 /** Longer than this and the session is over rather than paused. */
@@ -88,17 +106,40 @@ export function clearAlive() {
  *   onInterruption(ms, source)  a freeze shorter than ABANDON_AFTER_MS
  *   onAbandon(ms, source)       a freeze longer than that; the session must end
  *   onHide()                    going hidden: flush buffers, try to upload
+ *   onSuspend(source)           fired IMMEDIATELY on hide or on a detected freeze,
+ *                               before classification, so the UI can be made
+ *                               unanswerable before anything stale is clicked
  *   getState()                  () => ({ session_uid, stage }) for the stamp
  */
+/**
+ * Set by the running watcher so isStale() can be called from anywhere, including
+ * from a response handler that has no reference to the watcher.
+ */
+let lastHeartbeat = Date.now();
+
+/**
+ * True if the wall clock has jumped further than a heartbeat should allow, i.e.
+ * the page was frozen and the detector has not caught up yet.
+ *
+ * Depends on no event, which is the point: a click arriving in the window between
+ * wake and detection must be refused, and the only way to know is to ask the clock.
+ */
+export function isStale(thresholdMs = FREEZE_THRESHOLD_MS) {
+  return (Date.now() - lastHeartbeat) > thresholdMs;
+}
+
 export function watch(handlers) {
   let lastTick = Date.now();
+  lastHeartbeat = lastTick;
   let hiddenAt = null;
   let hiddenTotal = 0;
+  let hiddenEvents = 0;
   let stopped = false;
 
   const state = () => (handlers.getState ? handlers.getState() : {});
 
   function report(ms, source) {
+    hiddenEvents++;
     if (ms >= ABANDON_AFTER_MS) {
       if (handlers.onAbandon) handlers.onAbandon(ms, source);
     } else if (handlers.onInterruption) {
@@ -111,6 +152,7 @@ export function watch(handlers) {
     const now = Date.now();
     const gap = now - lastTick;
     lastTick = now;
+    lastHeartbeat = now;
 
     const s = state();
     stampAlive(s.session_uid, s.stage);
@@ -118,6 +160,9 @@ export function watch(handlers) {
     // The heartbeat missed beats: the page was frozen for `gap`. This is the
     // detector that actually catches a closed lid.
     if (gap > FREEZE_THRESHOLD_MS) {
+      // Veil FIRST, classify second. Until the veil is up, a stale stimulus is
+      // still clickable.
+      if (handlers.onSuspend) handlers.onSuspend('freeze');
       hiddenTotal += gap - TICK_MS;
       report(gap - TICK_MS, 'freeze');
     }
@@ -127,6 +172,9 @@ export function watch(handlers) {
     if (stopped) return;
     if (document.visibilityState === 'hidden') {
       hiddenAt = Date.now();
+      // Before anything else: going hidden means whatever is on screen must stop
+      // being answerable, so the veil is up before the page can come back.
+      if (handlers.onSuspend) handlers.onSuspend('hidden');
       // Flush and attempt an upload now: storage_persisted is false on the target
       // machine, so a batch left sitting in the outbox is the one thing in this
       // design that eviction could actually destroy.
@@ -138,6 +186,7 @@ export function watch(handlers) {
       hiddenAt = null;
       hiddenTotal += ms;
       lastTick = Date.now();       // do not double-count as a freeze on the next tick
+      lastHeartbeat = lastTick;
       report(ms, 'visibility');
     }
   }
@@ -145,6 +194,7 @@ export function watch(handlers) {
   function onPageHide() {
     const s = state();
     stampAlive(s.session_uid, s.stage);   // synchronous; the only reliable last act
+    if (handlers.onSuspend) handlers.onSuspend('pagehide');
     if (handlers.onHide) handlers.onHide();
   }
 
@@ -159,7 +209,13 @@ export function watch(handlers) {
       window.removeEventListener('pagehide', onPageHide);
     },
     hiddenTotalMs() { return Math.round(hiddenTotal); },
-    /** Consume and reset, for attributing a gap to the trial it landed in. */
-    takeHidden() { const v = Math.round(hiddenTotal); hiddenTotal = 0; return v; }
+    hiddenEvents() { return hiddenEvents; },
+    /** Consume and reset, so a gap is attributed to exactly one interval. */
+    takeHidden() {
+      const v = { ms: Math.round(hiddenTotal), n: hiddenEvents };
+      hiddenTotal = 0;
+      hiddenEvents = 0;
+      return v;
+    }
   };
 }

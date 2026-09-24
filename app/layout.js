@@ -40,6 +40,33 @@
 const W_DIV = 1.32;
 const H_DIV = 0.825;
 
+/**
+ * The largest vertical content extent actually measured across the built screens,
+ * in units of u. Null until every screen exists and has been measured.
+ *
+ * H_DIV must be derived from this, not guessed. While it is null the geometry is
+ * provisional, and geometryProblem() refuses to let collection start - which is why
+ * flipping GEOMETRY_FINAL in config.js on its own does nothing.
+ */
+export const MEASURED_CONTENT_EXTENT_U = null;
+
+/**
+ * Returns null if the geometry may be treated as final, or a reason string if not.
+ * Called at boot; a non-null reason blocks collection regardless of config flags.
+ */
+export function geometryProblem(claimFinal, measured = MEASURED_CONTENT_EXTENT_U) {
+  if (!claimFinal) return null;
+  if (measured === null || measured === undefined) {
+    return 'GEOMETRY_FINAL is set but MEASURED_CONTENT_EXTENT_U is null: the layout '
+         + 'divisors are still derived from an estimate. Measure the built screens first.';
+  }
+  if (!(measured > 0) || measured > 0.75) {
+    return 'MEASURED_CONTENT_EXTENT_U = ' + measured + ' is outside the plausible range '
+         + '(0, 0.75]; H_DIV would not leave a margin.';
+  }
+  return null;
+}
+
 /** Fractions of u. Frozen: these are the instrument's geometry. */
 export const FRAC = {
   crtHome: 0.124,

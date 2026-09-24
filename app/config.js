@@ -39,19 +39,29 @@ if (!TOKEN.startsWith('app_')) {
 }
 
 /**
- * COLLECTING gates every upload.
+ * Collection is gated by TWO conditions, and COLLECTING is derived from them.
  *
- * FALSE while the probes are stubbed. The shell runs end to end, writes locally and
- * queues batches in the outbox, but posts nothing — so placeholder data can never
- * reach the canonical trial tables. A single stub row in trials_2026_09 would be
- * indistinguishable from real data later, and the whole design exists so that month
- * four is comparable to month one.
+ * Deliberately not a single editable line. It must not be possible to record the
+ * first real row before the geometry is final, because the layout constants are
+ * part of the instrument: a session collected at one stimulus size is not
+ * comparable to one collected at another, and the divisors are still provisional
+ * until measured against real screens rather than an estimate of them.
  *
- * Flip to true only when the probes emit real trials. Queued batches drain on the
- * next session automatically, so nothing collected in between is lost — though
- * anything recorded while the probes were stubs should be cleared first.
+ * PROBES_REAL     the probes emit real trials rather than stubs. While false, one
+ *                 placeholder row in the canonical trial table would be
+ *                 indistinguishable from real data later.
+ *
+ * GEOMETRY_FINAL  the layout divisors have been set from the measured vertical
+ *                 extent of the built screens. Setting this true while
+ *                 MEASURED_CONTENT_EXTENT_U is still null is refused at boot by
+ *                 layout.geometryProblem(), so the flag alone achieves nothing.
+ *
+ * Flipping either one by itself changes nothing. Both, plus a recorded measurement,
+ * are required.
  */
-export const COLLECTING = false;
+export const PROBES_REAL = false;
+export const GEOMETRY_FINAL = false;
+export const COLLECTING = PROBES_REAL && GEOMETRY_FINAL;
 
 /**
  * Compiled-in config defaults. The Sheet's config tab can override these, but the

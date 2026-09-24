@@ -6,7 +6,7 @@
  * timed task.
  */
 
-import { DEFAULTS, COLLECTING, APP_VERSION } from './config.js';
+import { DEFAULTS, COLLECTING, GEOMETRY_FINAL, PROBES_REAL, APP_VERSION } from './config.js';
 import * as store from './store.js';
 import * as layout from './layout.js';
 import * as upload from './upload.js';
@@ -22,6 +22,20 @@ const el = id => document.getElementById(id);
 let config = Object.assign({}, DEFAULTS);
 
 async function boot() {
+  // Blocking gate, not advice. If the geometry is claimed final without a measured
+  // extent behind it, refuse to collect no matter what the config flags say. Better
+  // to record nothing than to record a series whose stimulus sizes changed halfway.
+  const geomProblem = layout.geometryProblem(GEOMETRY_FINAL);
+  if (geomProblem) {
+    console.error('[cognitive-practice] collection blocked: ' + geomProblem);
+    if (COLLECTING) {
+      document.body.innerHTML =
+        '<main id="screen"><div class="pane"><p class="lead">Not ready yet.</p>'
+        + '<p class="sub">Setup is incomplete.</p></div></main>';
+      return;
+    }
+  }
+
   layout.apply();
   window.addEventListener('resize', () => layout.apply());
   if (window.visualViewport) {
@@ -63,7 +77,8 @@ async function boot() {
   if (DEBUG) {
     const est = await store.storageEstimate();
     const ob = await upload.outboxSummary();
-    debugLog(`${APP_VERSION} | collecting=${COLLECTING} | u=${layout.unit()}px`);
+    debugLog(`${APP_VERSION} | collecting=${COLLECTING}`
+             + ` (probes=${PROBES_REAL} geometry=${GEOMETRY_FINAL}) | u=${layout.unit()}px`);
     debugLog(`quota ${est.quota ? Math.round(est.quota / 1048576) + 'MB' : '?'}`
              + ` | outbox ${ob.pending} pending, ${ob.quarantined} quarantined`);
     if (SEED) debugLog('seed override: ' + SEED);

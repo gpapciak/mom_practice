@@ -64,16 +64,32 @@ function wait(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-/** Waits for a click on one of the given elements; resolves with its value. */
-function choose(nodes) {
+/**
+ * Waits for a click on one of the given elements; resolves { value, event }.
+ *
+ * A click arriving while the page is STALE is refused, not recorded. Between the
+ * machine waking and the heartbeat noticing, the previous screen is still on
+ * display with live handlers under it - exactly what someone would try to answer -
+ * and accepting that click would write a real-looking trial row whose latency is
+ * however long the lid was shut. The refusal is silent to the user: the veil goes
+ * up and the detector decides what happens next.
+ */
+function choose(nodes, opts) {
+  const onStale = opts && opts.onStale;
   return new Promise(resolve => {
     const handlers = [];
-    const done = value => {
+    const done = (value, event) => {
       handlers.forEach(([n, h]) => n.removeEventListener('click', h));
-      resolve(value);
+      resolve({ value, event });
     };
     nodes.forEach(n => {
-      const h = () => done(n.dataset.value);
+      const h = ev => {
+        if (lifecycle.isStale()) {
+          if (onStale) onStale();
+          return;                 // refuse; the watcher will classify the gap
+        }
+        done(n.dataset.value, ev);
+      };
       n.addEventListener('click', h);
       handlers.push([n, h]);
     });
@@ -99,7 +115,25 @@ export class Session {
     this.greetingFired = false;
     this.aborted = null;
     this.ended = false;
-    this.pendingHiddenMs = 0;
+
+    // Interruption accounting, deliberately split in two.
+    //
+    // preMs/preN  accumulate between trials: an interruption there contaminates a
+    //             retention INTERVAL, and lands in pre_trial_interruption_*.
+    // duringMs    accumulates while a trial is open: that contaminates the
+    //             RESPONSE, lands in hidden_ms, and is the only one of the two that
+    //             flags the row aborted.
+    //
+    // Conflating them was a real bug in the first version of this file: a lid
+    // closure during a retention interval flagged the following recognition
+    // response as aborted, when the response was fine and only the delay was
+    // contaminated.
+    this.preMs = 0;
+    this.preN = 0;
+    this.duringMs = 0;
+    this.duringN = 0;
+    this.trialOpen = false;
+    this.veiled = false;
 
     const g = layout.apply();
     this.stagePx = g.u;
@@ -114,8 +148,36 @@ export class Session {
    * nothing is discarded at collection time.
    */
   onInterruption(ms, source) {
-    this.pendingHiddenMs += ms;
-    this.log(`interruption ${Math.round(ms)}ms (${source}) — resuming in place`);
+    if (this.trialOpen) {
+      this.duringMs += ms;
+      this.duringN++;
+    } else {
+      this.preMs += ms;
+      this.preN++;
+    }
+    const where = this.trialOpen ? 'a trial' : 'an interval';
+    this.log('interruption ' + Math.round(ms) + 'ms (' + source + ') during '
+             + where + ' - resuming in place');
+    this.unveil();
+  }
+
+  /**
+   * Makes the screen unanswerable immediately, before the interruption has been
+   * classified. Cheap, idempotent, and removed again only if the session resumes.
+   */
+  veil(source) {
+    if (this.veiled) return;
+    this.veiled = true;
+    const v = el('veil');
+    if (v) v.hidden = false;
+    this.log('veiled (' + source + ')');
+  }
+
+  unveil() {
+    if (!this.veiled) return;
+    this.veiled = false;
+    const v = el('veil');
+    if (v) v.hidden = true;
   }
 
   /** Over the threshold: the session is over. Keep everything, upload, reset. */
@@ -124,6 +186,7 @@ export class Session {
     this.log(`abandoned after ${Math.round(ms / 1000)}s hidden (${source})`);
     speech.cancel();
     this.aborted = { ms, source };
+    this.veil('abandon');
     await this.end('abandoned_hidden');
     if (this.onReset) this.onReset();
   }
@@ -157,28 +220,54 @@ export class Session {
       dpr: this.vp.dpr,
       visual_viewport_scale: this.vp.scale,
       stage_px: this.stagePx,
-      hidden_ms: 0,
       rng_seed: this.seed
     };
   }
 
   /**
-   * Buffers a trial row. Flushed in the inter-trial interval, never mid-trial.
-   * Any interruption accumulated since the last row is attributed here, and the
-   * row is flagged aborted because its latency is then meaningless — kept, not
-   * discarded: trimming is an analysis decision made later from raw rows.
+   * Opens a trial. Everything accumulated since the previous trial closed is now
+   * this trial's PRE-interval figure, and further interruptions count against the
+   * trial itself.
+   *
+   * Probes call beginTrial() at stimulus onset and addTrial() once the response is
+   * in, so the split between a contaminated interval and a contaminated response is
+   * made at collection time rather than guessed at later.
+   */
+  beginTrial() {
+    this.trialOpen = true;
+    this.duringMs = 0;
+    this.duringN = 0;
+    return { preMs: Math.round(this.preMs), preN: this.preN };
+  }
+
+  /**
+   * Buffers a trial row and closes the trial. Flushed in the inter-trial interval,
+   * never mid-trial.
+   *
+   * Only an interruption DURING the trial flags it aborted, because only that makes
+   * the latency meaningless. An interruption during the preceding interval is
+   * recorded in pre_trial_interruption_ms and leaves the response alone. Nothing is
+   * discarded either way: trimming is an analysis decision, made later, from raw
+   * rows.
    */
   addTrial(fields) {
-    const hidden = this.pendingHiddenMs;
-    this.pendingHiddenMs = 0;
+    const pre = { ms: Math.round(this.preMs), n: this.preN };
+    const during = { ms: Math.round(this.duringMs), n: this.duringN };
+    this.preMs = 0; this.preN = 0;
+    this.duringMs = 0; this.duringN = 0;
+    this.trialOpen = false;
+
     const row = Object.assign(this.sessionContext(), {
       trial_uid: store.uuid(),
       trial_index: this.trialIndex++,
       stage: this.stage,
       ms_since_session_start: Date.now() - this.startedAt,
-      hidden_ms: Math.round(hidden)
+      hidden_ms: during.ms,
+      pre_trial_interruption_ms: pre.ms,
+      pre_trial_interruption_n: pre.n
     }, fields);
-    if (hidden > 0 && !row.outcome_flag) row.outcome_flag = 'aborted';
+
+    if (during.ms > 0 && !fields.outcome_flag) row.outcome_flag = 'aborted';
     this.trialBuffer.push(row);
     this.nTrials++;
     return row;
@@ -265,6 +354,7 @@ export class Session {
       getState: () => ({ session_uid: this.uid, stage: this.stage }),
       onInterruption: (ms, src) => this.onInterruption(ms, src),
       onAbandon: (ms, src) => this.onAbandon(ms, src),
+      onSuspend: src => this.veil(src),
       onHide: () => this.onHide()
     });
 
@@ -354,7 +444,9 @@ export class Session {
           <button class="big" data-value="no">No</button>
         </div>
       </div>`;
-    this.company = await choose([...screen().querySelectorAll('button')]);
+    const picked = await choose([...screen().querySelectorAll('button')],
+      { onStale: () => this.veil('stale-click') });
+    this.company = picked.value;
     this.log('company: ' + this.company);
   }
 

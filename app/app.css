@@ -133,3 +133,29 @@ button.big:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px
   color: #d8f0c8;
   z-index: 99;
 }
+
+/*
+ * The veil. Raised before an interruption is classified, so nothing stale can be
+ * clicked. It deliberately says almost nothing: it is shown for a fraction of a
+ * second in the ordinary case, and after a long gap it is replaced by the opening
+ * screen rather than explained.
+ */
+#veil {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  background: var(--bg);
+  /* Belt and braces: even if something is somehow on top, nothing under the veil
+     can receive a click. */
+  pointer-events: all;
+}
+
+#veil[hidden] { display: none; }
+
+#veil p {
+  margin: 0;
+  font-size: calc(var(--u) * 0.040);
+  color: var(--ink-soft);
+}

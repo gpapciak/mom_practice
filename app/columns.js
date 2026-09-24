@@ -7,7 +7,7 @@
  * nothing may be inserted in the middle.
  */
 
-/** schema_version 1, revision 1.4-pre-collection */
+/** schema_version 1, revision 1.5-pre-collection */
 export const TRIAL_COLUMNS = [
   'trial_uid', 'schema_version', 'app_version', 'device_id', 'session_uid',
   'session_seq', 'session_date_local', 'session_start_utc', 'tz_offset_min',
@@ -24,7 +24,7 @@ export const TRIAL_COLUMNS = [
   'stimulus_side', 'viewport_w', 'viewport_h', 'dpr',
   'visual_viewport_scale', 'stage_px', 'hidden_ms', 'rng_seed',
   'concept_prior_exposures', 'concept_days_since_last', 'item_source',
-  'choice_sources',
+  'choice_sources', 'pre_trial_interruption_ms', 'pre_trial_interruption_n',
 ];
 
 export const TRIAL_SCHEMA_VERSION = 1;
