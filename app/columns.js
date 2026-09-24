@@ -1,13 +1,12 @@
 /**
  * Column order for the data endpoint. GENERATED - do not edit by hand.
  *
- * Source of truth is the schema contract kept with the design docs; this file is
- * regenerated from it by tools/gen_app_columns.py. Names only, in order: the
- * endpoint aligns rows by column name, so order here must match the contract and
- * nothing may be inserted in the middle.
+ * Source of truth is the schema contract kept with the design docs. Names only, in
+ * order: the endpoint aligns rows by column name, so order here must match the
+ * contract and nothing may be inserted in the middle.
  */
 
-/** schema_version 1, revision 1.5-pre-collection */
+/** schema_version 1, revision 1.6-pre-collection */
 export const TRIAL_COLUMNS = [
   'trial_uid', 'schema_version', 'app_version', 'device_id', 'session_uid',
   'session_seq', 'session_date_local', 'session_start_utc', 'tz_offset_min',
@@ -25,6 +24,8 @@ export const TRIAL_COLUMNS = [
   'visual_viewport_scale', 'stage_px', 'hidden_ms', 'rng_seed',
   'concept_prior_exposures', 'concept_days_since_last', 'item_source',
   'choice_sources', 'pre_trial_interruption_ms', 'pre_trial_interruption_n',
+  'training_interval_days', 'training_next_interval_days',
+  'training_exposures', 'training_is_retest',
 ];
 
 export const TRIAL_SCHEMA_VERSION = 1;
