@@ -1,0 +1,172 @@
+/**
+ * Upload: one batch per session, never a byte during a timed task.
+ *
+ * A per-trial POST would contaminate the reaction-time measures, which is the
+ * reason this design is local-first at all. The network is touched in exactly
+ * three places, all of them outside timing:
+ *
+ *   1. session end, after the closing screen is already on screen
+ *   2. the start of the next session, before START is pressed
+ *   3. visibilitychange -> hidden, because local storage is not persistent on the
+ *      target machine and an unsent batch is the only thing eviction could destroy
+ *
+ * Unsent batches accumulate in the outbox and drain. A fortnight offline drains as
+ * a fortnight of batches.
+ */
+
+import { ENDPOINT, TOKEN, COLLECTING } from './config.js';
+import { TRIAL_COLUMNS, SESSION_COLUMNS, TEXT_COLUMNS } from './columns.js';
+import * as store from './store.js';
+
+/**
+ * Content-Type MUST be text/plain.
+ *
+ * An application/json POST triggers a preflight OPTIONS request, which Apps Script
+ * web apps do not answer, and it fails in Safari with a CORS error that looks
+ * exactly like a network problem and is not. The endpoint parses the body itself.
+ */
+const CONTENT_TYPE = 'text/plain;charset=utf-8';
+
+const REQUEST_TIMEOUT_MS = 20000;
+
+/** Row objects -> arrays in schema column order. */
+function block(columns, rows) {
+  return {
+    columns,
+    rows: rows.map(r => columns.map(c => (r[c] === undefined ? null : r[c]))),
+    text_columns: TEXT_COLUMNS
+  };
+}
+
+export function buildBatch(trialRows, sessionRows) {
+  return {
+    batch_id: store.uuid(),
+    kind: 'batch',
+    trials: block(TRIAL_COLUMNS, trialRows),
+    sessions: block(SESSION_COLUMNS, sessionRows),
+    queued_at: Date.now()
+  };
+}
+
+async function post(batch) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const res = await fetch(ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': CONTENT_TYPE },
+      body: JSON.stringify({ token: TOKEN, ...batch }),
+      signal: ctl.signal
+    });
+    const json = await res.json();
+    return json;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Drains the outbox. Returns { sent, kept, quarantined, config }.
+ *
+ * Three outcomes per batch, and the distinction matters:
+ *
+ *   ok                  -> remove from the outbox. A duplicate reply counts as ok:
+ *                          the batch already landed, so keeping it would double it.
+ *   retryable           -> leave it. Network down, endpoint busy, tokens not yet
+ *                          configured. Nothing is lost; the next session tries again.
+ *   not retryable       -> QUARANTINE, do not retry and do not silently drop.
+ *                          Retrying identical rejected input fails identically, but
+ *                          a rejected batch is either an attack on the endpoint or a
+ *                          bug in this client, and both need to be visible. Dropping
+ *                          it would hide a client bug for weeks.
+ */
+export async function drain({ onlyIfCollecting = true } = {}) {
+  const result = { sent: 0, kept: 0, quarantined: 0, config: null };
+
+  if (onlyIfCollecting && !COLLECTING) {
+    const pending = await store.allOutbox();
+    result.kept = pending.filter(b => !b.quarantined).length;
+    return result;
+  }
+
+  const batches = (await store.allOutbox())
+    .filter(b => !b.quarantined)
+    .sort((a, b) => (a.queued_at || 0) - (b.queued_at || 0));
+
+  for (const batch of batches) {
+    let res;
+    try {
+      res = await post(batch);
+    } catch (e) {
+      result.kept++;                       // offline or aborted: keep and move on
+      continue;
+    }
+
+    if (res && res.ok) {
+      await store.deleteOutbox(batch.batch_id);
+      await cleanupLocal(batch);
+      result.sent++;
+      if (res.config) result.config = res.config;
+    } else if (res && res.retryable) {
+      result.kept++;
+    } else {
+      // Quarantine in place rather than delete. The rows stay readable locally and
+      // the reason is recorded next to them.
+      batch.quarantined = true;
+      batch.quarantine_reason = (res && res.error) || 'rejected';
+      batch.quarantined_at = Date.now();
+      await store.putOutbox(batch);
+      result.quarantined++;
+    }
+  }
+  return result;
+}
+
+/**
+ * Once a batch is acknowledged, its local trial and session rows are no longer the
+ * system of record and can go. Quarantined batches keep theirs.
+ */
+async function cleanupLocal(batch) {
+  try {
+    const tUid = TRIAL_COLUMNS.indexOf('trial_uid');
+    const sUid = SESSION_COLUMNS.indexOf('session_uid');
+    if (tUid >= 0) await store.deleteTrials(batch.trials.rows.map(r => r[tUid]).filter(Boolean));
+    if (sUid >= 0) await store.deleteSessions(batch.sessions.rows.map(r => r[sUid]).filter(Boolean));
+  } catch (e) { /* leaving local copies is harmless; losing them is not */ }
+}
+
+/** Queue a session's data. Does not upload — callers choose when. */
+export async function enqueue(trialRows, sessionRows) {
+  const batch = buildBatch(trialRows, sessionRows);
+  await store.putOutbox(batch);
+  return batch.batch_id;
+}
+
+/**
+ * Config arrives piggybacked on a successful POST, so a settings change lands on
+ * the next session with no extra round trip. This is the same-day path: a
+ * non-blocking GET at page load, with a short timeout, that can never delay START.
+ */
+export async function fetchConfig({ timeoutMs = 3000 } = {}) {
+  if (!TOKEN) return null;
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    const url = ENDPOINT + '?action=config&token=' + encodeURIComponent(TOKEN);
+    const res = await fetch(url, { signal: ctl.signal });
+    const json = await res.json();
+    return json && json.ok ? json.config : null;
+  } catch (e) {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function outboxSummary() {
+  const all = await store.allOutbox();
+  return {
+    pending: all.filter(b => !b.quarantined).length,
+    quarantined: all.filter(b => b.quarantined).length
+  };
+}

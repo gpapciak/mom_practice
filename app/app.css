@@ -1,0 +1,135 @@
+/*
+ * Session styling.
+ *
+ * Everything sized from --u, published by layout.js, so the whole session scales
+ * with the viewport and preserves visual angle under a zoom change.
+ *
+ * Non-negotiables encoded here:
+ *   - the page NEVER scrolls (overflow hidden on both axes, fixed height)
+ *   - no hover-dependent behaviour: hover styling is decorative only, and every
+ *     control is fully identifiable without it
+ *   - no text selection or drag, which would let a stray click-drag do something
+ *   - large targets with generous dead space between them
+ *   - nothing red, anywhere: errors are absorbed, never marked
+ */
+
+:root {
+  --u: 800px;
+  --ink: #1c1b19;
+  --ink-soft: #5d5a54;
+  --bg: #f4f2ee;
+  --card: #ffffff;
+  --line: #d8d5cd;
+  --accent: #1b4f9c;
+  --accent-ink: #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ink: #ece9e3;
+    --ink-soft: #a7a29a;
+    --bg: #1a1917;
+    --card: #232220;
+    --line: #3a3834;
+    --accent: #6f9fe0;
+    --accent-ink: #12181f;
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;              /* the session must never scroll */
+  background: var(--bg);
+  color: var(--ink);
+  font: 400 17px/1.5 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;             /* no accidental drag-selection */
+  -webkit-user-select: none;
+}
+
+#screen {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: calc(var(--u) * 0.03);
+}
+
+.pane {
+  width: min(calc(var(--u) * 1.20), 100%);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(var(--u) * 0.045);
+}
+
+.lead {
+  margin: 0;
+  font-size: calc(var(--u) * 0.052);
+  line-height: 1.25;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.sub {
+  margin: 0;
+  font-size: calc(var(--u) * 0.034);
+  color: var(--ink-soft);
+}
+
+/* Large targets, generous dead space, nothing adjacent. */
+button.big {
+  font: inherit;
+  font-size: calc(var(--u) * 0.036);
+  font-weight: 500;
+  min-width: var(--buttonW, calc(var(--u) * 0.247));
+  min-height: var(--buttonH, calc(var(--u) * 0.103));
+  padding: 0 calc(var(--u) * 0.04);
+  border: 1px solid var(--line);
+  border-radius: calc(var(--u) * 0.014);
+  background: var(--card);
+  color: var(--ink);
+  cursor: pointer;
+  transition: filter .12s ease;
+}
+
+button.big.primary {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: transparent;
+  min-width: calc(var(--u) * 0.30);
+  min-height: calc(var(--u) * 0.12);
+  font-size: calc(var(--u) * 0.044);
+}
+
+/* Decorative only. Nothing is identifiable by hover alone. */
+button.big:hover { filter: brightness(1.05); }
+button.big:active { filter: brightness(0.96); }
+button.big:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+
+.choices {
+  display: flex;
+  gap: var(--buttonGap, calc(var(--u) * 0.206));
+  justify-content: center;
+  flex-wrap: nowrap;
+}
+
+/* Debug overlay. Only ever visible with ?debug=1, never during real use. */
+#debug {
+  position: fixed;
+  left: 0; bottom: 0; right: 0;
+  max-height: 32vh;
+  overflow: auto;
+  margin: 0;
+  padding: 8px 10px;
+  font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap;
+  background: rgba(0, 0, 0, .82);
+  color: #d8f0c8;
+  z-index: 99;
+}

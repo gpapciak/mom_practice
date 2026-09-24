@@ -39,6 +39,21 @@ if (!TOKEN.startsWith('app_')) {
 }
 
 /**
+ * COLLECTING gates every upload.
+ *
+ * FALSE while the probes are stubbed. The shell runs end to end, writes locally and
+ * queues batches in the outbox, but posts nothing — so placeholder data can never
+ * reach the canonical trial tables. A single stub row in trials_2026_09 would be
+ * indistinguishable from real data later, and the whole design exists so that month
+ * four is comparable to month one.
+ *
+ * Flip to true only when the probes emit real trials. Queued batches drain on the
+ * next session automatically, so nothing collected in between is lost — though
+ * anything recorded while the probes were stubs should be cleared first.
+ */
+export const COLLECTING = false;
+
+/**
  * Compiled-in config defaults. The Sheet's config tab can override these, but the
  * app must run correctly having never reached the network — a first session on a
  * fresh device runs entirely on these values.
@@ -56,7 +71,7 @@ export const DEFAULTS = {
  * live here rather than in the Sheet precisely so that changing one leaves a
  * trace in the data.
  */
-export const APP_VERSION = '0.1.0+2026-09-20';
+export const APP_VERSION = '0.2.0-shell+2026-09-23';
 
 /**
  * Filler durations set the nominal retention delays. Deliberately NOT remotely
@@ -66,3 +81,12 @@ export const TIMING = {
   filler_1_ms: 75000,
   filler_2_ms: 90000
 };
+
+/** The local day boundary is fixed, not taken from the device's guess. */
+export const TIMEZONE = 'America/Los_Angeles';
+
+/**
+ * Longer than this hidden or frozen and the session ends rather than resumes.
+ * Mirrors ABANDON_AFTER_MS in lifecycle.js, which owns the behaviour.
+ */
+export const ABANDON_AFTER_MS = 5 * 60 * 1000;

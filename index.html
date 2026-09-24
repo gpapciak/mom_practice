@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Practice</title>
+<link rel="stylesheet" href="app/app.css">
+</head>
+<body>
+  <!--
+    One element. Every screen replaces its contents, so there is only ever one
+    thing on screen: no navigation, no menus, no progress bar, no timer, no
+    counter, and no reachable settings.
+  -->
+  <main id="screen" aria-live="polite"></main>
+
+  <!-- Only ever shown with ?debug=1. -->
+  <pre id="debug" hidden></pre>
+
+  <script type="module" src="app/main.js"></script>
+</body>
+</html>

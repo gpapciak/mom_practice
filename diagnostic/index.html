@@ -252,12 +252,16 @@ if (TOKEN && TOKEN.indexOf('diag_') !== 0) {
 }
 
 var CARD_WIDTH_MM = 85.6;   /* ISO/IEC 7810 ID-1. Every bank card. */
-var APP_VERSION = 'diag-0.2.0+2026-09-23';
+var APP_VERSION = 'diag-0.2.1+2026-09-23';
 
 /* Layout unit used by the real session. Geometry is a fixed fraction of u, and
  * the divisors are the widest and tallest extents any screen needs in u-units,
  * so the session always fits without scrolling. Kept identical to the app. */
-function stageUnit(w, h) { return Math.min(w / 1.32, h / 0.825); }
+function stageUnit(w, h) {
+  /* floor, not round: the app floors so the layout is guaranteed to fit, and
+   * stage_px must mean exactly the same number in both places. */
+  return Math.floor(Math.min(w / 1.32, h / 0.825));
+}
 
 var D = {
   diag_uid: uuid(),
@@ -347,7 +351,7 @@ function measure() {
     D.vv_w = Math.round(window.visualViewport.width);
     D.vv_h = Math.round(window.visualViewport.height);
   }
-  D.stage_px = Math.round(stageUnit(D.inner_w, D.inner_h));
+  D.stage_px = stageUnit(D.inner_w, D.inner_h);
 }
 
 function renderScreen() {
