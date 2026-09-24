@@ -27,6 +27,7 @@ import * as layout from './layout.js';
 import * as speech from './speech.js';
 import * as upload from './upload.js';
 import * as lifecycle from './lifecycle.js';
+import * as crt from './probe_crt.js';
 
 /** Frozen stage names. Filler produces no trial rows. */
 export const STAGES = [
@@ -456,6 +457,12 @@ export class Session {
    * indistinguishable from real data later.
    */
   async doStage(stage) {
+    // Probe A is real. The two blocks are identical in every parameter and differ
+    // only in when they occur: their difference is the fatigue measure.
+    if (stage === 'crt_1' || stage === 'crt_2') {
+      await crt.run(this, { screenEl: screen(), seed: this.seed + ':' + stage });
+      return;
+    }
     const filler = stage.startsWith('filler');
     const ms = stage === 'filler_1' ? TIMING.filler_1_ms
              : stage === 'filler_2' ? TIMING.filler_2_ms

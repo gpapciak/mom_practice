@@ -159,3 +159,75 @@ button.big:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px
   font-size: calc(var(--u) * 0.040);
   color: var(--ink-soft);
 }
+
+/*
+ * Probe A — choice reaction time.
+ *
+ * Three fixed zones on a plain field, all central, none near an edge: the user is at
+ * reading distance in readers. Nothing else on screen — no timer, no counter, no
+ * progress indicator.
+ *
+ * Every size is a fraction of --u, so the distance from the home pad to either
+ * target is the same visual angle in every session regardless of zoom. That distance
+ * IS the travel measure, which is why it cannot be a hardcoded pixel value.
+ */
+.crt {
+  position: relative;
+  width: calc(var(--u) * 1.00);
+  height: calc(var(--u) * 0.42);
+  display: grid;
+  place-items: center;
+}
+
+.crt-home,
+.crt-target {
+  position: absolute;
+  top: 50%;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  border-radius: 50%;
+}
+
+.crt-home {
+  left: 50%;
+  width: var(--crtHome);
+  height: var(--crtHome);
+  transform: translate(-50%, -50%);
+  background: var(--card);
+  border: 1px solid var(--line);
+  color: var(--ink-soft);
+  font-size: calc(var(--u) * 0.017);
+  line-height: 1.25;
+}
+
+.crt-target {
+  width: var(--crtTarget);
+  height: var(--crtTarget);
+  background: transparent;
+  /* Outline only until lit. Visible enough to be understood as a place to click,
+     quiet enough that the onset is unmistakable. */
+  box-shadow: inset 0 0 0 2px var(--line);
+}
+
+#crtLeft  { left: 50%; transform: translate(calc(-50% - var(--crtOffset)), -50%); }
+#crtRight { left: 50%; transform: translate(calc(-50% + var(--crtOffset)), -50%); }
+
+/* The onset. A solid fill, high contrast, no animation: a transition would make the
+   moment of onset ambiguous, and onset is the instant every latency is measured from. */
+.crt-target.lit {
+  background: var(--accent);
+  box-shadow: none;
+}
+
+.crt-note {
+  position: absolute;
+  top: calc(50% + var(--crtTarget));
+  margin: calc(var(--u) * 0.04) 0 0;
+  font-size: calc(var(--u) * 0.030);
+  color: var(--ink-soft);
+  /* Reserved height, so a neutral acknowledgement appearing does not shift the
+     targets. Nothing may move between trials. */
+  min-height: calc(var(--u) * 0.045);
+}
