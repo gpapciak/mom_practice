@@ -1325,5 +1325,85 @@ section('28. the screen review cannot fall out of date');
 }
 
 
+/* ========================= 29. the greeting, the name, and the close */
+
+section('29. no name in the code, and no time of day in the greeting');
+{
+  installBrowser();
+  const sc = await import('../app/screens.js');
+  const cfg = await import('../app/config.js?v=29');
+
+  /* THE STRUCTURAL GUARD. A name cannot be caught by a pattern-matching content gate:
+     names cannot be enumerated, and a gate listing the one to look for would publish
+     it. So the only slot for a name is empty in the compiled-in defaults, and this
+     asserts it stays that way. */
+  check('the compiled-in display_name is empty', cfg.DEFAULTS.display_name === '',
+    JSON.stringify(cfg.DEFAULTS.display_name));
+  check('every compiled-in default is name-free',
+    Object.values(cfg.DEFAULTS).every(v => typeof v !== 'string' || !/^[A-Z][a-z]{2,}$/.test(v.trim())),
+    JSON.stringify(cfg.DEFAULTS));
+
+  /* No time of day. There is no schedule and no expectation of one, so "good morning"
+     is wrong whenever it is wrong, and cannot be checked against anything. */
+  const all = [sc.openHtml({}), sc.greetingHtml({}), sc.closeHtml({}), sc.inactiveHtml({}),
+               sc.greetingSpeech({})].join(' ');
+  check('nothing greets by time of day',
+    !/morning|afternoon|evening|tonight/i.test(all), all.slice(0, 120));
+  check('the greeting is a plain hello', sc.hello({}) === 'Hello.', sc.hello({}));
+  // The stand-in is deliberately NOT name-shaped. A gate cannot tell a fake name from
+  // a real one, so "it's only a test value" is not a distinction it can make - and a
+  // fixture that looks like a name is how a real one gets normalised into the code.
+  const STAND_IN = 'TESTNAME';
+  check('and takes a name from config when there is one',
+    sc.hello({ display_name: STAND_IN }) === `Hello, ${STAND_IN}.`,
+    sc.hello({ display_name: STAND_IN }));
+  check('the spoken greeting matches the written one',
+    sc.greetingSpeech({ display_name: STAND_IN }).startsWith(`Hello, ${STAND_IN}.`));
+  check('a name with markup in it is escaped, not injected',
+    !sc.openHtml({ display_name: '<b>x</b>' }).includes('<b>'),
+    sc.openHtml({ display_name: '<b>x</b>' }));
+
+  /* The close: warm, brief, never a summary of performance. */
+  const close = sc.closeHtml({ display_name: STAND_IN, closing_note: 'Thank you.' });
+  check('the close states completion', /finished the practice/i.test(close));
+  check('and greets by name if one is set', close.includes(STAND_IN));
+  check('the closing note is config, so its wording needs no deploy',
+    sc.closeHtml({ closing_note: 'Great effort!' }).includes('Great effort!'));
+  check('an empty closing note simply omits the line',
+    !sc.closeHtml({ closing_note: '' }).includes('<p class="sub">'));
+  check('NEVER a score, count or streak on the close',
+    !/\b\d+\s*(of|\/)\s*\d+|score|streak|correct|points/i.test(close), close);
+
+  /* message_line is family news, and must not be dressed as an instruction. */
+  check('message_line appears when set',
+    sc.closeHtml({ message_line: 'Anna comes Thursday.' }).includes('Anna comes Thursday.'));
+  check('and is absent when not', !sc.closeHtml({}).includes('instruction'));
+}
+
+section('30. the company question distinguishes being helped');
+{
+  installBrowser();
+  const sc = await import('../app/screens.js?v=30');
+  const html = sc.companyHtml();
+
+  check('three options, not two',
+    (html.match(/data-value="/g) || []).length === 3,
+    String((html.match(/data-value="/g) || []).length));
+
+  // The third is the one that matters: if the responses are not the user's own, no covariate
+  // fixes that, and a yes/no question makes it invisible.
+  check('alone is offered', html.includes('data-value="alone"'));
+  check('merely present is offered', html.includes('data-value="someone_present"'));
+  check('BEING HELPED is offered separately', html.includes('data-value="someone_helping"'));
+
+  check('it asks about right now, which is answerable from the room',
+    /just now|right now|at the moment/i.test(html), html.slice(0, 80));
+  check('and makes clear that any answer is fine, so help is not framed as cheating',
+    /any answer is fine/i.test(html));
+  check('nothing implies help is a problem',
+    !/cheat|should not|must not|alone only/i.test(html));
+}
+
+
 console.log('\n' + (fail === 0 ? `ALL ${pass} CHECKS PASSED` : `${pass} passed, ${fail} FAILED`));
 process.exit(fail === 0 ? 0 : 1);

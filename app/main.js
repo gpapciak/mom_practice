@@ -13,6 +13,7 @@ import * as upload from './upload.js';
 import * as lifecycle from './lifecycle.js';
 import { Session } from './session.js';
 import { parseItems } from './training.js';
+import * as screens from './screens.js';
 
 /** Skipped rows are reported rather than swallowed: the tab is edited by hand. */
 function trainingParse(rows) {
@@ -138,21 +139,10 @@ async function boot() {
  */
 function drawOpening() {
   if (!config.session_active) {
-    el('screen').innerHTML = `
-      <div class="pane">
-        <p class="lead">Nothing to do today.</p>
-        <p class="sub">Have a lovely day.</p>
-      </div>`;
+    el('screen').innerHTML = screens.inactiveHtml(config);
     return;
   }
-
-  el('screen').innerHTML = `
-    <div class="pane">
-      <p class="lead">Good morning.</p>
-      <p class="sub">Some practice — about ten minutes.</p>
-      <button id="start" class="big primary">Start</button>
-    </div>`;
-
+  el('screen').innerHTML = screens.openHtml(config);
   el('start').addEventListener('click', startSession, { once: true });
 }
 

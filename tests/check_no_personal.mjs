@@ -40,6 +40,24 @@ const PATTERNS = [
   [/\blives alone\b/i, 'living situation'],
   [/\b8[0-9][- ]year[- ]old\b/i, 'age'],
   [/\b(mum|mom|mother|grandmother|grandma)\b/i, 'relationship'],
+  /*
+   * A greeting followed by a capitalised word: "Hello, Linden", "Hi Sam".
+   *
+   * Added because a real name reached a code comment in the very file whose header
+   * declared that no name may appear, and every pattern above sailed past it. Names
+   * in general cannot be caught this way - they cannot be enumerated, and a gate
+   * listing the one to look for would publish it - but THIS shape can be, and it is
+   * the shape an example value takes.
+   *
+   * Use a placeholder in examples: "Hello, <name>." passes, a real one does not.
+   * Test fixtures use an all-caps stand-in for the same reason: a gate cannot tell a
+   * fake name from a real one, so "it is only a test value" is not a distinction it
+   * can make, and a name-shaped fixture is how a real name gets normalised in.
+   */
+  // The greeting word is matched either case, but the NAME must stay case-sensitive:
+  // an /i flag would make [A-Z] match lowercase too and flag "hello there".
+  [/\b([Hh]ello|[Hh]i|[Dd]ear|[Gg]reetings)[,!]?\s+(?!<)[A-Z][a-z]{2,}/,
+    'a name in a greeting: use <name>'],
 ];
 
 function walk(dir, out = []) {

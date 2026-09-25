@@ -31,6 +31,7 @@ import * as filler from './filler.js';
 import * as layout from './layout.js';
 import { rng } from './rng.js';
 import { DEFAULTS } from './config.js';
+import * as sc from './screens.js';
 
 /** Stand-in content, clearly marked so it is never mistaken for real rows. */
 const SAMPLE = {
@@ -40,35 +41,14 @@ const SAMPLE = {
 };
 
 function screens(config) {
-  const line = (config.message_line || '').trim();
   return [
-    {
-      id: 'open',
-      note: 'First thing seen. A greeting, how long it takes, one button.',
-      html: `
-        <div class="pane">
-          <p class="lead">Good morning.</p>
-          <p class="sub">Some practice — about ten minutes.</p>
-          <button class="big primary" type="button">Start</button>
-        </div>`
-    },
-    {
-      id: 'greeting',
-      note: 'Spoken here, because Safari drops speech before a user gesture.',
-      html: `<div class="pane"><p class="lead">Good morning.</p><p class="sub">Let's begin.</p></div>`
-    },
-    {
-      id: 'company_question',
-      note: 'Asked once. Off the opening screen so the first thing seen is warm.',
-      html: `
-        <div class="pane">
-          <p class="lead">Is someone with you right now?</p>
-          <div class="choices">
-            <button class="big" type="button">Yes</button>
-            <button class="big" type="button">No</button>
-          </div>
-        </div>`
-    },
+    { id: 'open', note: 'First thing seen. No time of day: there is no schedule.',
+      html: sc.openHtml(config) },
+    { id: 'greeting', note: 'Spoken here, because Safari drops speech before a gesture.',
+      html: sc.greetingHtml(config) },
+    { id: 'company_question',
+      note: 'Three options: being HELPED is the one that affects the data.',
+      html: sc.companyHtml() },
     { id: 'training_prompt', note: 'Q: label, question, instruction smaller. Reveal button appears after 5s.',
       html: train.promptHtml(SAMPLE) },
     { id: 'training_prompt_revealed', note: 'The same screen once the button has faded in.',
@@ -89,20 +69,10 @@ function screens(config) {
         .replace('<button class="crt-home"', '<button hidden class="crt-home"') },
     { id: 'crt_done', note: 'The end of the block is stated, not inferred.', html: crt.doneHtml() },
     { id: 'filler', note: 'Something to look at, and it says there is nothing to do.', html: '' },
-    {
-      id: 'close',
-      note: 'Warm, brief, no summary of performance. Never a score.',
-      html: `
-        <div class="pane">
-          <p class="lead">That's everything for today. Thank you.</p>
-          ${line ? `<p class="sub">${line}</p>` : '<p class="sub">(message_line, if set)</p>'}
-        </div>`
-    },
-    {
-      id: 'session_inactive',
-      note: 'config session_active = FALSE. The remote off switch.',
-      html: `<div class="pane"><p class="lead">Nothing to do today.</p><p class="sub">Have a lovely day.</p></div>`
-    }
+    { id: 'close', note: 'Warm, brief, no summary of performance. Never a score.',
+      html: sc.closeHtml(config) },
+    { id: 'session_inactive', note: 'config session_active = FALSE. The remote off switch.',
+      html: sc.inactiveHtml(config) }
   ];
 }
 

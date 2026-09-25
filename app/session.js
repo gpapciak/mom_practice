@@ -33,6 +33,7 @@ import * as training from './training.js';
 import * as filler from './filler.js';
 import { localDateFor, localTimeFor } from './dates.js';
 import { rng } from './rng.js';
+import * as screens from './screens.js';
 
 /**
  * THE SESSION SKELETON. Frozen from the first collected row.
@@ -514,16 +515,13 @@ export class Session {
    */
   async doGreeting() {
     this.stage = 'greeting';
-    screen().innerHTML = `
-      <div class="pane">
-        <p class="lead">Good morning.</p>
-        <p class="sub">Let's begin.</p>
-      </div>`;
+    screen().innerHTML = screens.greetingHtml(this.config);
+    this.checkFits('greeting');
 
     if (this.config.audio_enabled) {
       const warm = await speech.warm();
       this.log(`voices ${warm.voices}, using ${warm.voice}`);
-      const outcome = await speech.say('Good morning. Let us begin.');
+      const outcome = await speech.say(screens.greetingSpeech(this.config));
       this.speechOutcome = outcome;
       this.greetingFired = outcome === 'fired';
       this.log('greeting speech: ' + outcome);
@@ -539,17 +537,11 @@ export class Session {
    */
   async doCompanyQuestion() {
     this.stage = 'company_question';
-    screen().innerHTML = `
-      <div class="pane">
-        <p class="lead">Is someone with you right now?</p>
-        <div class="choices">
-          <button class="big" data-value="yes">Yes</button>
-          <button class="big" data-value="no">No</button>
-        </div>
-      </div>`;
-    const picked = await choose([...screen().querySelectorAll('button')],
+    screen().innerHTML = screens.companyHtml();
+    this.checkFits('company_question');
+    const picked = await choose([...screen().querySelectorAll('.choices button')],
       { onStale: () => this.veil('stale-click') });
-    this.company = picked.value;
+    this.company = picked.value || 'unknown';
     this.log('company: ' + this.company);
   }
 
@@ -605,13 +597,9 @@ export class Session {
 
   /** Warm, brief, no summary of performance. */
   async doClose() {
-    const line = (this.config.message_line || '').trim();
-    screen().innerHTML = `
-      <div class="pane">
-        <p class="lead">That's everything for today. Thank you.</p>
-        ${line ? `<p class="sub">${escapeHtml(line)}</p>` : ''}
-      </div>`;
-    await wait(2500);
+    screen().innerHTML = screens.closeHtml(this.config);
+    this.checkFits('close');
+    await wait(3000);
   }
 
   /**
@@ -689,7 +677,4 @@ export class Session {
   }
 }
 
-function escapeHtml(s) {
-  return s.replace(/[&<>"']/g, c =>
-    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-}
+

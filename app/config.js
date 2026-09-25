@@ -74,7 +74,29 @@ export const DEFAULTS = {
   config_version: 1,
   audio_enabled: true,
   session_active: true,
-  message_line: ''
+  message_line: '',
+
+  /**
+   * How the user is addressed. EMPTY HERE, ALWAYS.
+   *
+   * This repository is public, and a name is not something a pattern-matching gate
+   * can catch: names cannot be enumerated, and a gate listing the one to look for
+   * would publish it itself. So the protection is structural - the value lives in
+   * the private Sheet, this default stays empty, and a test asserts it.
+   *
+   * Empty gives a name-free greeting, which is correct behaviour rather than a
+   * degraded fallback.
+   */
+  display_name: '',
+
+  /**
+   * One short line on the closing screen, after "You've finished the practice."
+   *
+   * Config rather than code so its wording can be settled without a deploy. The
+   * default is a plain thank-you: effort praise is the register used with children
+   * and with patients, and the brief rules out both registers.
+   */
+  closing_note: 'Thank you.'
 };
 
 /**

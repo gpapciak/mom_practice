@@ -6,7 +6,7 @@
  * contract and nothing may be inserted in the middle.
  */
 
-/** schema_version 1, revision 1.9-pre-collection */
+/** schema_version 1, revision 1.10-pre-collection */
 export const TRIAL_COLUMNS = [
   'trial_uid', 'schema_version', 'app_version', 'device_id', 'session_uid',
   'session_seq', 'session_date_local', 'session_start_utc', 'tz_offset_min',
@@ -32,7 +32,7 @@ export const TRIAL_COLUMNS = [
 
 export const TRIAL_SCHEMA_VERSION = 1;
 
-/** schema_version 1, revision 1.4-pre-collection */
+/** schema_version 1, revision 1.5-pre-collection */
 export const SESSION_COLUMNS = [
   'session_uid', 'schema_version', 'app_version', 'device_id',
   'session_seq', 'session_date_local', 'opened_at_utc',
