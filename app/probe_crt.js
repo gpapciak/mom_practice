@@ -60,6 +60,30 @@ export const ANTICIPATION_MS = 150;         // faster than this is not a decisio
 export const MOVE_THRESHOLD_PX = 8;
 export const FEEDBACK_MS = 400;             // target dims, then the home pad returns
 
+/**
+ * Unscored warm-up trials before the measured block, in BOTH blocks.
+ *
+ * This is how the task is normally administered, and for good reason: the first few
+ * trials of an unfamiliar speeded task measure learning the task, not the thing the
+ * task is for. They are excluded by STAGE NAME rather than by a flag, so they cannot
+ * be pooled by anyone who forgets to filter.
+ *
+ * Both blocks get the same number. Warming only the first would make crt_2 minus
+ * crt_1 a mixture of fatigue and warm-up rather than fatigue alone - and that
+ * difference is the entire fatigue measure.
+ */
+export const PRACTICE_TRIALS = 4;
+
+/**
+ * Kept on screen for the whole block, and this is not decoration.
+ *
+ * The rule is that every screen must make sense on its own to someone who cannot
+ * carry an instruction forward from the previous screen and has nobody to ask. An
+ * instruction screen shown once before the block does not satisfy that: by trial
+ * three it has been forgotten. So the instruction stays visible.
+ */
+export const REMINDER = 'Click the circle as soon as it turns blue.';
+
 /** 1000–2500 ms in 100 ms steps. Jittered so the onset cannot be anticipated. */
 export const FOREPERIODS = [
   1000, 1100, 1200, 1300, 1400, 1500, 1600, 1700,
@@ -164,13 +188,62 @@ export function classify({ clicked, expected, responseMs, beforeOnset }) {
 
 /* ---------------------------------------------------------------------- run */
 
-const HTML = `
+/**
+ * The playing field.
+ *
+ * Both positions are always visible as empty sockets, so it is clear where things
+ * happen. The lit one becomes a solid disc with a ring inside it: a shape that reads
+ * as "aim here" without needing to be read, which matters because reading time would
+ * land inside the reaction time being measured.
+ *
+ * The home pad is what makes travel time interpretable - it returns the cursor to a
+ * known centre before every trial - and it is labelled so that its purpose is legible
+ * rather than inferred.
+ */
+export const FIELD_HTML = `
 <div class="crt" id="crt">
-  <button class="crt-home" id="crtHome" type="button">Click here<br>for the next one</button>
-  <button class="crt-target" id="crtLeft"  data-side="left"  type="button" aria-label="left"></button>
-  <button class="crt-target" id="crtRight" data-side="right" type="button" aria-label="right"></button>
+  <button class="crt-home" id="crtHome" type="button">
+    <span class="crt-home-label">Click here<br>to start the next one</span>
+  </button>
+  <button class="crt-target" id="crtLeft" data-side="left" type="button" aria-label="left target">
+    <span class="crt-bullseye"></span>
+  </button>
+  <button class="crt-target" id="crtRight" data-side="right" type="button" aria-label="right target">
+    <span class="crt-bullseye"></span>
+  </button>
+  <p class="crt-reminder">${REMINDER}</p>
   <p class="crt-note" id="crtNote"></p>
 </div>`;
+
+/**
+ * Shown once before each block. Not frozen - it is instruction, not stimulus - so it
+ * can be reworded freely without touching probe_version.
+ *
+ * It shows the actual layout with one target lit, because a picture of what is about
+ * to happen is worth more than a description of it.
+ */
+export function instructionsHtml() {
+  return `
+    <div class="pane">
+      <p class="lead">A circle will turn blue.</p>
+      <p class="sub">Click it as quickly as you can.<br>
+        It will happen several times. It is not a test of anything.</p>
+      <div class="crt crt-demo" aria-hidden="true">
+        <span class="crt-target demo-socket"></span>
+        <span class="crt-target demo-socket lit"><span class="crt-bullseye"></span></span>
+      </div>
+      <button class="big primary" id="crtGo" type="button">I'm ready</button>
+    </div>`;
+}
+
+/** Shown once after each block, so the end is stated rather than inferred. */
+export function doneHtml() {
+  return `
+    <div class="pane">
+      <p class="lead">That part is finished.</p>
+      <p class="sub">Nothing more to do here.</p>
+    </div>`;
+}
 
 /**
  * Runs one block. Emits exactly TRIALS_PER_BLOCK rows through session.addTrial.
@@ -179,14 +252,29 @@ const HTML = `
  * every parameter and differ only in when they occur.
  */
 export async function run(session, { screenEl, seed }) {
-  screenEl.innerHTML = HTML;
+  const measuredStage = session.stage;              // 'crt_1' or 'crt_2'
+  const practiceStage = measuredStage + '_practice';
+
+  // Instructions, then a "ready" click, so nothing starts while it is still being
+  // read. The click belongs to the user, not to a timer.
+  screenEl.innerHTML = instructionsHtml();
+  session.checkFits(measuredStage + '_instructions');
+  await clickOnce(screenEl.querySelector('#crtGo'));
+
+  screenEl.innerHTML = FIELD_HTML;
   const home = screenEl.querySelector('#crtHome');
   const left = screenEl.querySelector('#crtLeft');
   const right = screenEl.querySelector('#crtRight');
   const note = screenEl.querySelector('#crtNote');
   const targets = { left, right };
 
+  // Practice first, from a separate seed so warm-up trials never reuse the measured
+  // sequence. It is experienced as one continuous activity: the screens are identical
+  // and the boundary is never announced, which is what makes practice painless.
+  const practice = makeBlock(seed + ':practice').slice(0, PRACTICE_TRIALS);
   const block = makeBlock(seed);
+  const all = practice.map(t => ({ t, stage: practiceStage }))
+    .concat(block.map(t => ({ t, stage: measuredStage })));
 
   // One persistent tracker, so the cursor position at stimulus onset is known
   // rather than assumed to be the home pad.
@@ -195,8 +283,12 @@ export async function run(session, { screenEl, seed }) {
   window.addEventListener('mousemove', trackPos, { passive: true });
 
   try {
-    for (let i = 0; i < block.length; i++) {
-      const trial = block[i];
+    let indexInStage = 0;
+    let lastStage = null;
+    for (let i = 0; i < all.length; i++) {
+      const { t: trial, stage } = all[i];
+      if (stage !== lastStage) { indexInStage = 0; lastStage = stage; }
+      session.stage = stage;
       note.textContent = '';
       setLit(targets, null);
       home.hidden = false;
@@ -215,7 +307,7 @@ export async function run(session, { screenEl, seed }) {
       session.addTrial(Object.assign({
         probe_id: PROBE_ID,
         probe_version: PROBE_VERSION,
-        stage_trial_index: i,
+        stage_trial_index: indexInStage++,
         stimulus_side: trial.side,
         foreperiod_ms: trial.foreperiod_ms,
         response: result.clicked
@@ -228,7 +320,14 @@ export async function run(session, { screenEl, seed }) {
     }
   } finally {
     window.removeEventListener('mousemove', trackPos);
+    session.stage = measuredStage;
   }
+
+  // The end of the block is stated, not left to be inferred from a screen that
+  // simply stops changing.
+  screenEl.innerHTML = doneHtml();
+  session.checkFits(measuredStage + '_done');
+  await sleep(2200);
 }
 
 /** One trial: foreperiod, onset, response. Resolves with row fields. */

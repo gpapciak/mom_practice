@@ -6,7 +6,7 @@
  * contract and nothing may be inserted in the middle.
  */
 
-/** schema_version 1, revision 1.8-pre-collection */
+/** schema_version 1, revision 1.9-pre-collection */
 export const TRIAL_COLUMNS = [
   'trial_uid', 'schema_version', 'app_version', 'device_id', 'session_uid',
   'session_seq', 'session_date_local', 'session_start_utc', 'tz_offset_min',
@@ -27,12 +27,12 @@ export const TRIAL_COLUMNS = [
   'training_interval_days', 'training_next_interval_days',
   'training_exposures', 'training_is_retest', 'training_recall',
   'training_reveal_latency_ms', 'training_max_interval_days',
-  'training_days_to_expiry',
+  'training_days_to_expiry', 'training_reveal_gate_ms',
 ];
 
 export const TRIAL_SCHEMA_VERSION = 1;
 
-/** schema_version 1, revision 1.3-pre-collection */
+/** schema_version 1, revision 1.4-pre-collection */
 export const SESSION_COLUMNS = [
   'session_uid', 'schema_version', 'app_version', 'device_id',
   'session_seq', 'session_date_local', 'opened_at_utc',

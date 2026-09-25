@@ -886,12 +886,19 @@ section('20. the skeleton: probe positions and session length do not move');
     S.trainingBudgetMs('phase2') < S.trainingBudgetMs('phase1'));
 
   // Training fills its slots and never overruns them.
+  // Derived from the module's own per-item budget rather than hardcoded: an exact
+  // number here would just need editing every time the screen timings change, which
+  // is the same brittleness as an exact column count.
+  const expect1 = Math.floor(S.trainingBudgetMs('phase1') / train.MS_PER_ITEM);
+  const expect2 = Math.floor(S.trainingBudgetMs('phase2') / train.MS_PER_ITEM);
   check('capacity is derived from the slot budget',
-    train.capacityFor(310000) === 17, String(train.capacityFor(310000)));
+    train.capacityFor(S.trainingBudgetMs('phase1')) === expect1, String(expect1));
   check('and from the smaller phase-2 budget',
-    train.capacityFor(165000) === 9, String(train.capacityFor(165000)));
+    train.capacityFor(S.trainingBudgetMs('phase2')) === expect2, String(expect2));
+  check('per-item budget allows for the reveal gate plus a considered answer',
+    train.MS_PER_ITEM >= 20000, String(train.MS_PER_ITEM));
   check('a slot too short for one item yields none, not a partial item',
-    train.capacityFor(5000) === 0);
+    train.capacityFor(train.MS_PER_ITEM - 1) === 0);
 }
 
 section('21. geometry is final, and backed by a number');
@@ -1146,6 +1153,175 @@ section('24. expiry and starts_on: inclusive, local, and visible');
     parsed.warnings.some(w => w.item_id === 't:c' && /starts_on/.test(w.why)));
   check('an absent column produces no warning',
     !parsed.warnings.some(w => w.item_id === 't:a'));
+}
+
+
+/* =================================== 25. a slot consumes its whole duration */
+
+section('25. filler fills its time, so a slot cannot end early');
+{
+  const env = installBrowser();
+  // Record what durations are requested rather than actually waiting.
+  const asked = [];
+  global.setTimeout = (fn, ms) => { asked.push(ms || 0); fn(); return asked.length; };
+  global.requestAnimationFrame = fn => { fn(1); return 1; };
+  const f = await import('../app/filler.js');
+  const { rng } = await import('../app/rng.js');
+
+  const host = { innerHTML: '', querySelector: () => stage, firstElementChild: null };
+  const stage = { children: [], appendChild(n) { this.children.push(n); },
+                  removeChild(n) { this.children.shift(); },
+                  get firstChild() { return this.children[0]; } };
+  global.document.createElement = () => ({ style: {}, classList: { add() {} } });
+
+  asked.length = 0;
+  await f.run({ screenEl: host, ms: 75000, rand: rng('t'), photos: null });
+  const total = asked.reduce((a, b) => a + b, 0);
+  check('filler consumes exactly the time it is given',
+    Math.abs(total - 75000) < 2, String(total));
+
+  asked.length = 0;
+  await f.run({ screenEl: host, ms: 94000, rand: rng('t'), photos: null });
+  check('and an arbitrary padding duration too',
+    Math.abs(asked.reduce((a, b) => a + b, 0) - 94000) < 2);
+
+  asked.length = 0;
+  await f.run({ screenEl: host, ms: 3000, rand: rng('t'), photos: null });
+  check('a short pad still resolves', Math.abs(asked.reduce((a, b) => a + b, 0) - 3000) < 2);
+
+  check('it renders something rather than a bare heading',
+    stage.children.length > 0, String(stage.children.length));
+  check('and it keeps the DOM small over a long filler', stage.children.length <= 2,
+    String(stage.children.length));
+}
+
+/* ===================================== 26. Probe A practice and comprehension */
+
+section('26. Probe A: practice trials, excluded by stage name');
+{
+  installBrowser();
+  const crt = await import('../app/probe_crt.js?v=26');
+  const S = await import('../app/session.js?v=26');
+
+  check('there are practice trials', crt.PRACTICE_TRIALS === 4, String(crt.PRACTICE_TRIALS));
+  check('the practice stages are declared',
+    S.STAGES.includes('crt_1_practice') && S.STAGES.includes('crt_2_practice'));
+
+  // Excluded by STAGE NAME, not a flag, so they cannot be pooled by anyone who
+  // forgets to filter.
+  check('practice stage names are distinct from the measured ones',
+    !['crt_1', 'crt_2'].includes('crt_1_practice'));
+
+  // Both blocks get the same warm-up, or crt_2 minus crt_1 would mix fatigue with
+  // warm-up rather than measuring fatigue alone.
+  check('both blocks have a practice stage',
+    S.STAGES.filter(s => s.endsWith('_practice')).length === 2,
+    S.STAGES.filter(s => s.endsWith('_practice')).join());
+
+  // Practice must not reuse the measured sequence.
+  const measured = crt.makeBlock('seed');
+  const practice = crt.makeBlock('seed:practice').slice(0, crt.PRACTICE_TRIALS);
+  check('practice draws a different sequence from the measured block',
+    JSON.stringify(practice) !== JSON.stringify(measured.slice(0, crt.PRACTICE_TRIALS)));
+  check('and is still a valid block', practice.every(t =>
+    (t.side === 'left' || t.side === 'right') && crt.FOREPERIODS.includes(t.foreperiod_ms)));
+
+  /* The instruction has to be on the screen, not only before it. */
+  check('the field carries a standing reminder',
+    crt.FIELD_HTML.includes(crt.REMINDER), crt.REMINDER);
+  check('the reminder says plainly what to do',
+    /click/i.test(crt.REMINDER) && /circle/i.test(crt.REMINDER), crt.REMINDER);
+  check('the target has a mark inside it, so it reads as a target not a decoration',
+    crt.FIELD_HTML.includes('crt-bullseye'));
+  check('the home pad says what it is for',
+    /start the next one/i.test(crt.FIELD_HTML));
+  check('the instruction screen says a circle will turn blue and to click it',
+    /turn blue/i.test(crt.instructionsHtml()) && /click it/i.test(crt.instructionsHtml()));
+  check('it shows the layout rather than only describing it',
+    crt.instructionsHtml().includes('crt-demo'));
+  check('it does not start until the reader says so',
+    crt.instructionsHtml().includes('crtGo'));
+  check('the end of the block is stated',
+    /finished/i.test(crt.doneHtml()) && /nothing more/i.test(crt.doneHtml()));
+}
+
+/* ======================================== 27. training screen comprehension */
+
+section('27. the training screens explain themselves');
+{
+  installBrowser();
+  const t = await import('../app/probe_training.js?v=27');
+  const item = { item_id: 't:x', prompt: 'Who is coming to visit?', answer: 'Chris.' };
+
+  const q = t.promptHtml(item);
+  check('the question is labelled Q:', q.includes('>Q:<'));
+  check('and carries the retrieval instruction',
+    /say the answer out loud/i.test(q), 'missing');
+  check('the instruction is styled smaller than the content',
+    q.includes('class="instruction"') && q.includes('class="lead question"'));
+  check('the reveal button starts hidden, so it cannot be clicked through',
+    /id="trReveal" hidden/.test(q));
+  check('and says what it does', /see if you were right/i.test(q));
+  check('there is a gate before it appears', t.REVEAL_GATE_MS === 5000, String(t.REVEAL_GATE_MS));
+
+  const a = t.answerHtml(item);
+  check('the answer screen labels both Q: and A:', a.includes('>Q:<') && a.includes('>A:<'));
+  check('the self-report question sits directly above the buttons',
+    a.indexOf('Did you get it right?') < a.indexOf('Got it')
+    && a.indexOf('Did you get it right?') > a.indexOf(item.answer));
+  check('all three options are offered',
+    /Got it/.test(a) && /Partly/.test(a) && /Not quite/.test(a));
+
+  const closed = t.closeHtml(item, true);
+  check('a miss is answered warmly, not marked', /that's all right/i.test(closed));
+  check('and nothing on it is red or an X', !/✗|✘|wrong|incorrect/i.test(closed));
+  check('a success is acknowledged briefly', /good/i.test(t.closeHtml(item, false)));
+
+  check('nothing waits forever', t.NO_RESPONSE_MS > 0 && t.NO_RESPONSE_MS <= 180000,
+    String(t.NO_RESPONSE_MS));
+}
+
+/* ============================ 28. the review mode covers every screen */
+
+section('28. the screen review cannot fall out of date');
+{
+  installBrowser();
+  const review = await import('../app/review.js?v=28');
+  const S = await import('../app/session.js?v=28');
+  const ids = review.screenIds();
+
+  check('the review lists screens', ids.length >= 14, String(ids.length));
+
+  // Every stage that puts something on screen must appear in the review, or a new
+  // screen could ship without anyone ever having looked at it - which is exactly how
+  // Probe A shipped unreadable.
+  const needs = {
+    training_1: 'training_prompt', crt_1: 'crt_field_waiting',
+    filler_1: 'filler', filler_2: 'filler'
+  };
+  for (const [stage, id] of Object.entries(needs)) {
+    check(`stage ${stage} has a reviewable screen (${id})`, ids.includes(id), ids.join(','));
+  }
+  for (const id of ['open', 'greeting', 'company_question', 'training_answer',
+                    'training_close_missed', 'crt_instructions', 'crt_field_lit',
+                    'crt_done', 'close', 'session_inactive']) {
+    check(`${id} is reviewable`, ids.includes(id), ids.join(','));
+  }
+  check('including the remote off switch, which is easy to forget',
+    ids.includes('session_inactive'));
+
+  // Every stage the app can be in must be a declarable last_stage_reached, or an
+  // abandoned session writes a value the schema never declared. This cross-check
+  // caught exactly that when the practice stages were added.
+  const sessionStages = [
+    'open', 'greeting', 'company_question', 'opening_recognition',
+    'crt_1_practice', 'crt_1', 'encoding', 'filler_1', 'recognition_short',
+    'filler_2', 'recognition_medium', 'crt_2_practice', 'crt_2', 'close',
+    'training_1', 'training_2', 'training_3', 'training_4'
+  ];
+  for (const st of S.STAGES) {
+    check(`stage ${st} is a declarable last_stage_reached`, sessionStages.includes(st), st);
+  }
 }
 
 

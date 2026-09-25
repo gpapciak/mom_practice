@@ -27,10 +27,32 @@ export const PROBE_ID = 'T_training';
 export const TRAINING_VERSION = 1;
 
 /** Budget per item, used to decide how many fit a slot. Generous on purpose. */
-export const MS_PER_ITEM = 18000;
+export const MS_PER_ITEM = 24000;
 
-const ANSWER_DWELL_MS = 1800;
-const MISS_DWELL_MS = 3200;
+/**
+ * The reveal button is withheld for this long.
+ *
+ * Without it the button can be clicked straight through without attempting retrieval,
+ * and the attempt is the entire mechanism - reading the answer is not practice. The
+ * delay is what makes the retrieval happen rather than merely being invited.
+ *
+ * Consequence for the measure: training_reveal_latency_ms is timed from the moment
+ * the button BECOMES AVAILABLE, not from the prompt appearing, because otherwise
+ * every value would carry a constant floor and the informative part would be the
+ * excess over it. training_reveal_gate_ms records this value so the zero point stays
+ * recoverable.
+ */
+export const REVEAL_GATE_MS = 5000;
+
+/**
+ * Nothing waits forever. Without a cap, a session left open on a prompt hangs until
+ * the lifecycle watcher notices a freeze - and if the page stays visible there is no
+ * freeze to notice, so it would hang indefinitely with nobody in the room.
+ */
+export const NO_RESPONSE_MS = 120000;
+
+const ANSWER_DWELL_MS = 2000;
+const MISS_DWELL_MS = 3400;
 
 const el = id => document.getElementById(id);
 
@@ -46,11 +68,64 @@ export function capacityFor(slotMs) {
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-/** Waits for a click, refusing one that arrives on a stale screen. */
-function awaitClick(nodes, onStale) {
+/* ------------------------------------------------------------------- screens */
+/**
+ * Each screen is a pure function of its item, exported so that the review mode
+ * renders exactly what a session renders. Duplicating this markup for review would
+ * let the reviewed copy drift from the shipped copy, which would make the review
+ * worse than none.
+ *
+ * Three tiers on every screen: a Q:/A: label, the content, then the instruction in a
+ * smaller size. The screen has to explain itself, because it is arrived at with no
+ * memory of the one before and there is nobody to ask.
+ */
+export function promptHtml(item) {
+  return `
+    <div class="pane train">
+      <p class="train-label">Q:</p>
+      <p class="lead question">${esc(item.prompt)}</p>
+      <p class="instruction">Say the answer out loud to yourself.</p>
+      <button class="big" data-value="reveal" id="trReveal" hidden>See if you were right</button>
+    </div>`;
+}
+
+export function answerHtml(item) {
+  return `
+    <div class="pane train">
+      <p class="train-label">Q:</p>
+      <p class="sub question-small">${esc(item.prompt)}</p>
+      <p class="train-label">A:</p>
+      <p class="lead answer">${esc(item.answer)}</p>
+      <p class="instruction">Did you get it right?</p>
+      <div class="choices three">
+        <button class="big" data-value="${RECALL.GOT}">Got it</button>
+        <button class="big" data-value="${RECALL.PARTLY}">Partly</button>
+        <button class="big" data-value="${RECALL.MISSED}">Not quite</button>
+      </div>
+    </div>`;
+}
+
+export function closeHtml(item, missed) {
+  return `
+    <div class="pane train">
+      <p class="train-label">A:</p>
+      <p class="lead answer">${esc(item.answer)}</p>
+      <p class="instruction warm">${missed ? "That's all right. Let's remember that one."
+                                           : 'Good.'}</p>
+    </div>`;
+}
+
+/**
+ * Waits for a click, refusing one that arrives on a stale screen, and never waiting
+ * forever. Resolves { value: null } on timeout so the caller records an omission and
+ * moves on rather than stalling.
+ */
+function awaitClick(nodes, { onStale, timeoutMs = NO_RESPONSE_MS } = {}) {
   return new Promise(resolve => {
     const hs = [];
+    let timer = null;
     const done = (value, ev) => {
+      if (timer) clearTimeout(timer);
       hs.forEach(([n, h]) => n.removeEventListener('click', h));
       resolve({ value, at: ev && ev.timeStamp });
     };
@@ -62,6 +137,7 @@ function awaitClick(nodes, onStale) {
       n.addEventListener('click', h);
       hs.push([n, h]);
     });
+    timer = setTimeout(() => done(null, null), timeoutMs);
   });
 }
 
@@ -92,45 +168,43 @@ async function runOne(session, { screenEl, stage, entry, index }) {
   const item = entry.item;
   const audio = !!session.config.audio_enabled;
 
-  /* ---- 1. the prompt, alone ---- */
-  screenEl.innerHTML = `
-    <div class="pane train">
-      <p class="lead">${esc(item.prompt)}</p>
-      <button class="big" data-value="reveal" id="trReveal">Show me</button>
-    </div>`;
+  /* ---- 1. the question, alone, with the retrieval instruction ---- */
+  //
+  // Q: and A: prefixes throughout, so which is which is never in doubt on a screen
+  // arrived at with no memory of the previous one. Instruction text is smaller than
+  // the content it is about, so the question is what the eye lands on.
+  screenEl.innerHTML = promptHtml(item);
 
   session.beginTrial();
   // Onset from the frame that paints the prompt, the same time base as the click.
-  const onset = await new Promise(r => requestAnimationFrame(t => r(t)));
-  const reveal = await awaitClick([el('trReveal')], () => session.veil('stale-click'));
-  const revealMs = reveal.at != null ? Math.round(reveal.at - onset) : null;
+  const promptOnset = await new Promise(r => requestAnimationFrame(t => r(t)));
+
+  // The button appears after the gate, so there is nothing to click through. The
+  // latency clock starts when it becomes available, not when the prompt appeared.
+  await sleep(REVEAL_GATE_MS);
+  const btn = el('trReveal');
+  let revealAvailableAt = null;
+  if (btn) {
+    btn.hidden = false;
+    btn.classList.add('fade-in');
+    revealAvailableAt = await new Promise(r => requestAnimationFrame(t => r(t)));
+  }
+  const reveal = await awaitClick([btn].filter(Boolean),
+    { onStale: () => session.veil('stale-click') });
+  const revealMs = (reveal.at != null && revealAvailableAt != null)
+    ? Math.max(0, Math.round(reveal.at - revealAvailableAt)) : null;
 
   /* ---- 2. the answer, then the self-report ---- */
-  screenEl.innerHTML = `
-    <div class="pane train">
-      <p class="sub">${esc(item.prompt)}</p>
-      <p class="lead answer">${esc(item.answer)}</p>
-      <div class="choices three">
-        <button class="big" data-value="${RECALL.GOT}">Got it</button>
-        <button class="big" data-value="${RECALL.PARTLY}">Partly</button>
-        <button class="big" data-value="${RECALL.MISSED}">Not quite</button>
-      </div>
-    </div>`;
+  screenEl.innerHTML = answerHtml(item);
 
   const picked = await awaitClick(
     [...screenEl.querySelectorAll('.choices button')],
-    () => session.veil('stale-click'));
+    { onStale: () => session.veil('stale-click') });
   const recall = picked.value || RECALL.OMITTED;
 
   /* ---- 3. close warmly. A miss is answered, never marked ---- */
   const missed = recall === RECALL.MISSED || recall === RECALL.OMITTED;
-  screenEl.innerHTML = `
-    <div class="pane train">
-      <p class="sub">${esc(item.prompt)}</p>
-      <p class="lead answer">${esc(item.answer)}</p>
-      <p class="sub warm">${missed ? "That's all right. Let's remember that one."
-                                   : 'Good.'}</p>
-    </div>`;
+  screenEl.innerHTML = closeHtml(item, missed);
 
   let speechOutcome = 'not_attempted';
   if (missed && audio) {
@@ -172,6 +246,7 @@ async function runOne(session, { screenEl, stage, entry, index }) {
     response_latency_ms: picked.at != null ? Math.round(picked.at - onset) : null,
     training_recall: recall,
     training_reveal_latency_ms: revealMs,
+    training_reveal_gate_ms: REVEAL_GATE_MS,
     training_interval_days: before,
     training_next_interval_days: entry.isRetest ? before : sched.interval_days,
     training_exposures: item.exposures || 0,

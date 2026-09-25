@@ -164,17 +164,27 @@ button.big:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px
  * Probe A — choice reaction time.
  *
  * Three fixed zones on a plain field, all central, none near an edge: the user is at
- * reading distance in readers. Nothing else on screen — no timer, no counter, no
- * progress indicator.
+ * reading distance in readers. No timer, no counter, no progress indicator.
  *
- * Every size is a fraction of --u, so the distance from the home pad to either
- * target is the same visual angle in every session regardless of zoom. That distance
- * IS the travel measure, which is why it cannot be a hardcoded pixel value.
+ * Every size is a fraction of --u, so the distance from the home pad to either target
+ * is the same visual angle in every session regardless of zoom. That distance IS the
+ * travel measure, which is why it cannot be a hardcoded pixel value.
+ *
+ * WHY THE TARGET LOOKS LIKE THIS. An outline circle reads as decoration, and a plain
+ * filled circle reads as decoration too - which it did, and the task was
+ * incomprehensible as a result. So:
+ *
+ *   the unlit sockets are visibly empty holes, making it clear where things happen;
+ *   the lit target is a solid, raised disc with a ring inside it, which reads as
+ *   "aim here" without needing to be read - reading time would otherwise land inside
+ *   the reaction time being measured;
+ *   and the instruction stays on screen for the whole block, because an instruction
+ *   shown once before the block has been forgotten by trial three.
  */
 .crt {
   position: relative;
   width: calc(var(--u) * 1.00);
-  height: calc(var(--u) * 0.42);
+  height: calc(var(--u) * 0.46);
   display: grid;
   place-items: center;
 }
@@ -182,12 +192,13 @@ button.big:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px
 .crt-home,
 .crt-target {
   position: absolute;
-  top: 50%;
+  top: 46%;
   border: 0;
   padding: 0;
-  cursor: pointer;
   font: inherit;
   border-radius: 50%;
+  display: grid;
+  place-items: center;
 }
 
 .crt-home {
@@ -196,66 +207,225 @@ button.big:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px
   height: var(--crtHome);
   transform: translate(-50%, -50%);
   background: var(--card);
-  border: 1px solid var(--line);
-  color: var(--ink-soft);
-  font-size: calc(var(--u) * 0.017);
-  line-height: 1.25;
+  border: 2px solid var(--accent);
+  color: var(--accent);
+  cursor: pointer;
+  box-shadow: 0 2px 0 0 var(--line);
+}
+.crt-home:hover { filter: brightness(1.04); }
+.crt-home:active { transform: translate(-50%, calc(-50% + 1px)); box-shadow: none; }
+
+.crt-home-label {
+  font-size: calc(var(--u) * 0.019);
+  line-height: 1.3;
+  font-weight: 600;
 }
 
+/* An empty socket: clearly a place where something will appear, clearly not itself
+   the thing to click yet. */
 .crt-target {
   width: var(--crtTarget);
   height: var(--crtTarget);
-  background: transparent;
-  /* Outline only until lit. Visible enough to be understood as a place to click,
-     quiet enough that the onset is unmistakable. */
-  box-shadow: inset 0 0 0 2px var(--line);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  box-shadow: inset 0 2px 5px color-mix(in srgb, var(--ink) 16%, transparent);
+  cursor: default;
 }
 
-#crtLeft  { left: 50%; transform: translate(calc(-50% - var(--crtOffset)), -50%); }
-#crtRight { left: 50%; transform: translate(calc(-50% + var(--crtOffset)), -50%); }
+.crt-bullseye { display: none; }
 
-/* The onset. A solid fill, high contrast, no animation: a transition would make the
-   moment of onset ambiguous, and onset is the instant every latency is measured from. */
+/* The onset. Solid, high contrast, raised, with a ring: unmistakably a thing to hit.
+   No transition - a fade would make the moment of onset ambiguous, and onset is the
+   instant every latency is measured from. */
 .crt-target.lit {
   background: var(--accent);
+  box-shadow: 0 3px 0 0 color-mix(in srgb, var(--accent) 60%, black);
+  cursor: pointer;
+}
+
+.crt-target.lit .crt-bullseye {
+  display: block;
+  width: 38%;
+  height: 38%;
+  border-radius: 50%;
+  border: calc(var(--u) * 0.008) solid var(--accent-ink);
+}
+
+.crt-target.lit:active {
   box-shadow: none;
+  transform: translate(calc(-50% + var(--shift, 0px)), calc(-50% + 3px));
+}
+
+#crtLeft  { left: 50%; --shift: calc(0px - var(--crtOffset)); transform: translate(calc(-50% - var(--crtOffset)), -50%); }
+#crtRight { left: 50%; --shift: var(--crtOffset);             transform: translate(calc(-50% + var(--crtOffset)), -50%); }
+
+/* Stays visible for the whole block. Static, outside the target area, and the reason
+   the screen makes sense on its own. */
+.crt-reminder {
+  position: absolute;
+  top: calc(46% + var(--crtTarget));
+  margin: calc(var(--u) * 0.055) 0 0;
+  font-size: calc(var(--u) * 0.026);
+  color: var(--ink-soft);
+  text-align: center;
 }
 
 .crt-note {
   position: absolute;
-  top: calc(50% + var(--crtTarget));
-  margin: calc(var(--u) * 0.04) 0 0;
-  font-size: calc(var(--u) * 0.030);
+  top: calc(46% + var(--crtTarget) + var(--u) * 0.10);
+  margin: 0;
+  font-size: calc(var(--u) * 0.026);
   color: var(--ink-soft);
   /* Reserved height, so a neutral acknowledgement appearing does not shift the
      targets. Nothing may move between trials. */
-  min-height: calc(var(--u) * 0.045);
+  min-height: calc(var(--u) * 0.040);
+}
+
+/* The still illustration on the instruction screen: the real layout, one lit, so the
+   words are shown rather than only described. */
+.crt-demo {
+  width: calc(var(--u) * 0.62);
+  height: calc(var(--u) * 0.20);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: calc(var(--u) * 0.16);
+}
+.crt-demo .demo-socket {
+  position: static;
+  transform: none;
+  width: calc(var(--crtTarget) * 0.8);
+  height: calc(var(--crtTarget) * 0.8);
 }
 
 /*
  * Training screens.
  *
- * Text-only, so this is the shortest screen in the session. The answer is styled as
- * the thing to read, not as a verdict: no colour signals success or failure, because
- * a miss is answered rather than marked.
+ * Three tiers, visually separated, because a screen arrived at with no memory of the
+ * previous one has to explain itself:
+ *
+ *   label        Q: / A:, small and muted. Says which kind of thing follows.
+ *   content      the question or the answer. The largest thing on screen.
+ *   instruction  what to do. SMALLER than the content it refers to, so the eye lands
+ *                on the content first and the instruction is there when wanted.
+ *
+ * Instruction text smaller than content is the rule, not a preference: an instruction
+ * set in the same size as the material competes with it for attention.
  */
-.pane.train { gap: calc(var(--u) * 0.038); }
+.pane.train {
+  gap: calc(var(--u) * 0.022);
+  max-width: calc(var(--u) * 1.10);
+}
 
+.pane.train .train-label {
+  margin: 0;
+  font-size: calc(var(--u) * 0.030);
+  font-weight: 700;
+  letter-spacing: .08em;
+  color: var(--ink-soft);
+}
+
+.pane.train .question,
 .pane.train .answer {
+  margin: 0 0 calc(var(--u) * 0.016);
   font-weight: 600;
-  max-width: calc(var(--u) * 1.05);
+}
+
+.pane.train .question-small {
+  margin: 0 0 calc(var(--u) * 0.016);
+  font-size: calc(var(--u) * 0.030);
+}
+
+/* Smaller than the content, and set apart from it. */
+.pane.train .instruction {
+  margin: calc(var(--u) * 0.022) 0 0;
+  padding-top: calc(var(--u) * 0.020);
+  border-top: 1px solid var(--line);
+  width: 100%;
+  font-size: calc(var(--u) * 0.028);
+  color: var(--ink-soft);
 }
 
 .pane.train .warm {
-  min-height: calc(var(--u) * 0.045);   /* reserved, so nothing shifts on reveal */
+  min-height: calc(var(--u) * 0.048);   /* reserved, so nothing shifts on reveal */
+  border-top: 0;
+  padding-top: 0;
+}
+
+/* The reveal button is withheld, then appears. The fade is what makes its arrival
+   legible as "now you may" rather than as a screen twitch. */
+@keyframes cp-fade-in { from { opacity: 0; } to { opacity: 1; } }
+.fade-in { animation: cp-fade-in 600ms ease-out both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .fade-in { animation: none; }
 }
 
 /* Three options need slightly tighter spacing than two, still with real dead space
    between them: nothing here should punish an imprecise click. */
 .choices.three {
-  gap: calc(var(--u) * 0.075);
+  gap: calc(var(--u) * 0.060);
+  margin-top: calc(var(--u) * 0.012);
 }
 
 .choices.three button.big {
-  min-width: calc(var(--u) * 0.215);
+  min-width: calc(var(--u) * 0.205);
+}
+
+/*
+ * Filler.
+ *
+ * Low-demand, pleasant, non-verbal, and NOT a memory task - it must not interfere
+ * with what is being retained. Photographs go here once imported; until then these
+ * are generated shapes, which need no assets and are deliberately unmemorable.
+ *
+ * It previously showed a heading and then nothing for 75 seconds, because the
+ * fallback was specified and never built.
+ */
+.filler {
+  position: relative;
+  width: calc(var(--u) * 1.15);
+  height: calc(var(--u) * 0.52);
+  border-radius: calc(var(--u) * 0.02);
+  overflow: hidden;
+  background: var(--card);
+}
+
+.filler-art {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 1400ms ease-in-out;
+}
+
+.filler-art.on { opacity: 1; }
+
+/*
+ * The review bar. Only ever visible with ?screens=1, never during a session.
+ *
+ * It shows the screen's name, why it exists, and whether it fits the vertical budget,
+ * so a reviewer can walk every screen in a minute instead of sitting through a
+ * ten-minute session to see half of them.
+ */
+#reviewBar {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  font: 12px/1.4 -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  background: rgba(20, 20, 20, .9);
+  color: #f2efe9;
+  z-index: 200;
+}
+#reviewBar strong { font-size: 13px; }
+#reviewBar .rv-n { opacity: .6; font-variant-numeric: tabular-nums; }
+#reviewBar .rv-note { flex: 1; opacity: .75; }
+#reviewBar .rv-fit.ok { color: #9fd9a6; }
+#reviewBar .rv-fit.bad { color: #ff9c92; font-weight: 700; }
+#reviewBar button {
+  font: inherit; font-size: 15px;
+  background: #3a3a3a; color: inherit;
+  border: 0; border-radius: 6px;
+  padding: 4px 12px; cursor: pointer;
 }

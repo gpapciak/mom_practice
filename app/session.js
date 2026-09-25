@@ -30,7 +30,9 @@ import * as lifecycle from './lifecycle.js';
 import * as crt from './probe_crt.js';
 import * as train from './probe_training.js';
 import * as training from './training.js';
+import * as filler from './filler.js';
 import { localDateFor, localTimeFor } from './dates.js';
+import { rng } from './rng.js';
 
 /**
  * THE SESSION SKELETON. Frozen from the first collected row.
@@ -68,7 +70,12 @@ export const STAGES = [
   'opening_recognition', 'crt_1', 'encoding',
   'filler_1', 'recognition_short', 'filler_2', 'recognition_medium',
   'crt_2', 'close',
-  'training_1', 'training_2', 'training_3', 'training_4'
+  'training_1', 'training_2', 'training_3', 'training_4',
+  // Unscored warm-up. Excluded from Probe A by stage name rather than by a flag, so
+  // they cannot be pooled by anyone who forgets to filter. Both blocks get them:
+  // warming only the first would make crt_2 minus crt_1 a mixture of fatigue and
+  // warm-up rather than fatigue alone.
+  'crt_1_practice', 'crt_2_practice'
 ];
 
 /** Total training time available in a phase, used to size the due-item queue. */
@@ -315,7 +322,12 @@ export class Session {
     if (!this.trialBuffer.length) return;
     const rows = this.trialBuffer;
     this.trialBuffer = [];
-    if (this.dry) { this.log(`dry run: discarded ${rows.length} trial row(s)`); return; }
+    if (this.dry) {
+      // Held in memory so the batch builder still sees them at the end.
+      this.dryTrials = (this.dryTrials || []).concat(rows);
+      this.log(`dry run: holding ${rows.length} trial row(s) in memory`);
+      return;
+    }
     await store.putTrials(rows);
   }
 
@@ -376,7 +388,12 @@ export class Session {
 
     const history = (await store.getMeta('stage_px_history', [])) || [];
     this.driftFlag = layout.driftFlag(this.stagePx, history);
-    await store.setMeta('stage_px_history', history.concat([this.stagePx]).slice(-30));
+    // A dry run must leave no trace. It previously bumped this and the session
+    // counter, which meant the rehearsal path was not quite the real one - and the
+    // rehearsal path is the only way anything gets tested by hand.
+    if (!this.dry) {
+      await store.setMeta('stage_px_history', history.concat([this.stagePx]).slice(-30));
+    }
 
     // Written before anything else, so an open that goes nowhere is still on the
     // record. never_started is the single most informative value in that table.
@@ -386,7 +403,10 @@ export class Session {
   /* ---------------- the run ---------------- */
 
   async run() {
-    this.seq = await store.nextSessionSeq();
+    // In a dry run the counter is read, not advanced: a rehearsal should not consume
+    // a session number that the real series will then be missing.
+    this.seq = this.dry ? (await store.peekSessionSeq()) + 1
+                        : await store.nextSessionSeq();
     this.startedAt = Date.now();
 
     // Built once per session, not per slot, so an item is never asked twice in a
@@ -450,11 +470,20 @@ export class Session {
     await this.flush();
 
     const sessionRow = this.sessionRow(reason);
+
     if (this.dry) {
-      this.log(`dry run: session NOT recorded (${this.nTrials} trials discarded)`);
+      // Everything a real session does, right up to persisting, so the rehearsal
+      // exercises the same code: the batch is built and the notices are computed,
+      // then thrown away. Doing less here would mean the rehearsal could pass while
+      // the real path failed.
+      const events = await this.contentEvents({ record: false });
+      const batch = upload.buildBatch(this.dryTrials || [], [sessionRow], events);
+      this.log(`dry run: built a batch of ${batch.trials.rows.length} trial row(s), `
+               + `${events.length} event(s), and discarded it`);
       lifecycle.clearAlive();
       return;
     }
+
     const rows = await store.trialsForSession(this.uid);
     await store.putSession(sessionRow);
     await upload.enqueue(rows, [sessionRow], await this.contentEvents());
@@ -538,26 +567,40 @@ export class Session {
       return;
     }
 
+    const slotMs = this.debug ? Math.min(slot.ms || 0, 20000) : (slot.ms || 0);
+
     if (stage.startsWith('training')) {
-      const n = await train.runSlot(this, {
-        screenEl: screen(), stage,
-        slotMs: this.debug ? Math.min(slot.ms, 40000) : slot.ms
-      });
+      const started = Date.now();
+      const n = await train.runSlot(this, { screenEl: screen(), stage, slotMs });
       this.checkFits(stage);
       this.log(`${stage}: ${n} items, ${this.trainingQueue.length} left in queue`);
+
+      // THE SLOT MUST CONSUME ITS DURATION whether or not there was content to fill
+      // it. Otherwise a day with few items due ends the slot early, every later
+      // stage arrives early, and crt_2 moves - which destroys the one thing the
+      // skeleton exists to guarantee. With 12 items against a 310s budget that was
+      // about 94 seconds of drift, varying day to day with how many were due.
+      const left = slotMs - (Date.now() - started);
+      if (left > 1500) {
+        this.log(`${stage}: padding ${Math.round(left / 1000)}s to hold the slot`);
+        await this.runFiller(stage, left);
+      }
       return;
     }
 
-    // Filler: low-demand, pleasant, non-verbal, and NOT a memory task - it must not
-    // interfere with what is being retained. Photographs go here once imported.
-    const ms = stage === 'filler_1' ? TIMING.filler_1_ms : TIMING.filler_2_ms;
-    screen().innerHTML = `
-      <div class="pane">
-        <p class="lead">Take a look at these.</p>
-        <p class="sub">${this.debug ? stage + ' — ' + ms + 'ms' : ''}</p>
-      </div>`;
-    this.checkFits(stage);
-    await wait(this.debug ? 2000 : ms);
+    await this.runFiller(stage, slotMs);
+  }
+
+  /** Filler content. Never a bare heading: see filler.js for why. */
+  async runFiller(stage, ms) {
+    if (ms <= 0) return;
+    await filler.run({
+      screenEl: screen(),
+      ms,
+      rand: rng(this.seed + ':filler:' + stage),
+      photos: this.photos || null
+    });
+    this.checkFits(stage + '_filler');
   }
 
   /** Warm, brief, no summary of performance. */
@@ -601,7 +644,7 @@ export class Session {
    * itself every session for three days running, and a noisy list is one nobody
    * reads, which defeats the whole purpose of surfacing it.
    */
-  async contentEvents() {
+  async contentEvents({ record = true } = {}) {
     const n = this.contentNotices;
     if (!n) return [];
     const seen = (await store.getMeta('notice_log', {})) || {};
@@ -633,7 +676,7 @@ export class Session {
     if (keys.length > 500) {
       for (const k of keys.slice(0, keys.length - 500)) delete seen[k];
     }
-    await store.setMeta('notice_log', seen);
+    if (record) await store.setMeta('notice_log', seen);
     return rows;
   }
 

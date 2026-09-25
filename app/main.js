@@ -35,6 +35,14 @@ const SEED = params.get('seed');
  * actual machine without putting a discontinuity in the series.
  */
 const DRY = params.get('dry') === '1';
+/**
+ * ?screens=1 walks every screen the user will see, for human review.
+ *
+ * The automated suite cannot judge comprehensibility - Probe A shipped unreadable
+ * with 262 checks green - so the answer is not a test but making the human review
+ * cheap enough to repeat after every change.
+ */
+const SCREENS = params.get('screens') === '1';
 
 const el = id => document.getElementById(id);
 
@@ -42,6 +50,13 @@ let config = Object.assign({}, DEFAULTS);
 let trainingItems = [];
 
 async function boot() {
+  if (SCREENS) {
+    const review = await import('./review.js');
+    const cached = await store.getMeta('config');
+    await review.run(cached || DEFAULTS);
+    return;
+  }
+
   // Blocking gate, not advice. If the geometry is claimed final without a measured
   // extent behind it, refuse to collect no matter what the config flags say. Better
   // to record nothing than to record a series whose stimulus sizes changed halfway.
