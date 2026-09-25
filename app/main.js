@@ -16,9 +16,12 @@ import { parseItems } from './training.js';
 
 /** Skipped rows are reported rather than swallowed: the tab is edited by hand. */
 function trainingParse(rows) {
-  const { items, skipped } = parseItems(rows);
+  const { items, skipped, warnings } = parseItems(rows);
   if (skipped.length) debugLog(`${skipped.length} training row(s) skipped: `
     + skipped.map(s => s.why).join('; '));
+  // A warning means a row is running, but not on the settings somebody intended.
+  if (warnings && warnings.length) debugLog(`${warnings.length} training warning(s): `
+    + warnings.map(w => `${w.item_id}: ${w.why}`).join('; '));
   return items;
 }
 

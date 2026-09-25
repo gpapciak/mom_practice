@@ -154,10 +154,49 @@ export function nextInterval(currentDays, recall, opts) {
   };
 }
 
-/** The ceiling in force: a per-item override, else the default. */
+/**
+ * The ceiling in force: a per-item override, else the default.
+ *
+ * BLANK IS NOT ZERO. A blank cell means "not set", so it gets the default ceiling.
+ * An explicit 0 or a negative number means something different - somebody typed it,
+ * and the only sensible reading is "as often as possible" - so it clamps to the
+ * shortest step rather than falling back to the default.
+ *
+ * That asymmetry is deliberate. Getting 21 days when you meant "every day" is the
+ * dangerous direction for volatile content, which is the whole reason this column
+ * exists. Getting 1 day when you meant nothing in particular just means being asked
+ * more often, which is harmless and if anything helps the errorless property.
+ *
+ * Sheets returns a blank cell as '' and a whitespace-only cell as ' ', and both must
+ * behave the same way.
+ */
 export function capFor(maxDays) {
-  const m = Number(maxDays);
-  return m > 0 ? Math.min(m, STEPS[STEPS.length - 1]) : DEFAULT_MAX_INTERVAL_DAYS;
+  if (maxDays === null || maxDays === undefined) return DEFAULT_MAX_INTERVAL_DAYS;
+  const text = String(maxDays).trim();
+  if (text === '') return DEFAULT_MAX_INTERVAL_DAYS;        // blank: not set
+  const m = Number(text);
+  if (!Number.isFinite(m)) return DEFAULT_MAX_INTERVAL_DAYS; // unparseable: not set
+  if (m <= 0) return STEPS[0];                               // typed, meaning "often"
+  return Math.min(m, STEPS[STEPS.length - 1]);
+}
+
+/**
+ * Whether a row is in rotation.
+ *
+ * BLANK MEANS ACTIVE. The tab is edited by hand, and requiring TRUE on every row to
+ * opt in would mean a newly typed row silently never runs.
+ *
+ * Sheets returns a cell containing FALSE as a JSON **boolean** `false`, not the
+ * string 'FALSE'. An earlier version of this read `String(v || 'TRUE')`, which turned
+ * boolean `false` into 'TRUE' and so treated a deliberately parked row as active.
+ * That is why the boolean cases come first here.
+ */
+export function isActive(value) {
+  if (value === false) return false;
+  if (value === true) return true;
+  const text = String(value === null || value === undefined ? '' : value).trim().toUpperCase();
+  if (text === '') return true;                              // blank: in rotation
+  return !['FALSE', 'NO', 'N', '0', 'OFF'].includes(text);
 }
 
 /**
@@ -229,6 +268,7 @@ export function insertRetest(queue, position, entry) {
 export function parseItems(rows) {
   const items = [];
   const skipped = [];
+  const warnings = [];
   for (const r of rows || []) {
     const id = String(r.item_id || '').trim();
     const prompt = String(r.prompt || '').trim();
@@ -241,6 +281,15 @@ export function parseItems(rows) {
       skipped.push({ row: r, why: 'item_id must start with "t:"' });
       continue;
     }
+    // A ceiling that was typed but could not be read is worth surfacing: it means
+    // an item somebody meant to constrain is running on the default instead.
+    const rawCap = r.max_interval_days;
+    if (rawCap !== null && rawCap !== undefined && String(rawCap).trim() !== ''
+        && !Number.isFinite(Number(String(rawCap).trim()))) {
+      warnings.push({ item_id: id, why: `max_interval_days ${JSON.stringify(rawCap)} is not a `
+        + `number; using the default ${DEFAULT_MAX_INTERVAL_DAYS} days` });
+    }
+
     items.push({
       item_id: id,
       prompt,
@@ -253,8 +302,8 @@ export function parseItems(rows) {
       // answer that changes daily, so extending its interval does not test
       // retention - it tests a fact that is no longer true.
       max_interval_days: capFor(r.max_interval_days),
-      active: String(r.active || 'TRUE').toUpperCase() !== 'FALSE'
+      active: isActive(r.active)
     });
   }
-  return { items, skipped };
+  return { items, skipped, warnings };
 }

@@ -920,5 +920,91 @@ section('21. geometry is final, and backed by a number');
 }
 
 
+/* ============================ 22. blank cells, and the types Sheets returns */
+
+section('22. what a blank cell means, and the boolean Sheets really sends');
+{
+  installBrowser();
+  const tr = await import('../app/training.js?v=22');
+
+  /* ---- active ---- */
+
+  // BLANK MEANS ACTIVE. Requiring TRUE to opt in would mean a newly typed row
+  // silently never runs, which is the worse failure for a hand-edited tab.
+  check('a blank active cell means ACTIVE', tr.isActive('') === true);
+  check('whitespace also means active', tr.isActive('  ') === true);
+  check('an absent column means active', tr.isActive(undefined) === true);
+  check('null means active', tr.isActive(null) === true);
+
+  // THE BUG THIS SECTION EXISTS FOR. Sheets returns a FALSE cell as a JSON boolean,
+  // not the string 'FALSE'. The previous parser did String(v || 'TRUE'), which turned
+  // boolean false into 'TRUE' and presented a deliberately parked row.
+  check('boolean false parks the row', tr.isActive(false) === false);
+  check('boolean true keeps it active', tr.isActive(true) === true);
+  check('the string FALSE parks it too', tr.isActive('FALSE') === false);
+  check('and is case-insensitive', tr.isActive('false') === false);
+  check('a few plain-English spellings park it',
+    tr.isActive('no') === false && tr.isActive('N') === false
+    && tr.isActive('off') === false && tr.isActive(0) === false);
+  check('anything else is active', tr.isActive('yes') === true && tr.isActive(1) === true);
+
+  /* ---- max_interval_days ---- */
+
+  // BLANK IS NOT ZERO.
+  check('a blank ceiling means "not set", so the default applies',
+    tr.capFor('') === tr.DEFAULT_MAX_INTERVAL_DAYS, String(tr.capFor('')));
+  check('a whitespace-only cell behaves the same', tr.capFor(' ') === 21, String(tr.capFor(' ')));
+  check('an absent column behaves the same', tr.capFor(undefined) === 21);
+  check('null behaves the same', tr.capFor(null) === 21);
+  check('a blank ceiling is emphatically NOT read as 0',
+    tr.capFor('') !== 0 && tr.capFor('') > 1);
+
+  check('a typed ceiling is used as given',
+    tr.capFor(1) === 1 && tr.capFor(2) === 2 && tr.capFor(7) === 7);
+  check('a string number works, since Sheets may send either',
+    tr.capFor('2') === 2);
+
+  // An explicit 0 is asymmetric with blank, deliberately: somebody typed it, and the
+  // only sensible reading is "as often as possible". Falling back to 21 there would
+  // be the dangerous direction for exactly the volatile content this column exists
+  // to protect.
+  check('an explicit 0 clamps to the shortest step, not to the default',
+    tr.capFor(0) === tr.STEPS[0], String(tr.capFor(0)));
+  check('a negative does the same', tr.capFor(-3) === 1);
+  check('so 0 and blank are NOT the same thing',
+    tr.capFor(0) !== tr.capFor(''), `${tr.capFor(0)} vs ${tr.capFor('')}`);
+
+  check('an unparseable ceiling falls back to the default rather than to 1',
+    tr.capFor('daily') === 21, String(tr.capFor('daily')));
+  check('and is capped at the top step', tr.capFor(999) === 60, String(tr.capFor(999)));
+
+  /* ---- the whole row, with the exact shapes the live tab returns ---- */
+
+  const parsed = tr.parseItems([
+    { item_id: 't:blank_active', prompt: 'p', answer: 'a', active: '', max_interval_days: '' },
+    { item_id: 't:parked', prompt: 'p', answer: 'a', active: false, max_interval_days: 1 },
+    { item_id: 't:volatile', prompt: 'p', answer: 'a', active: true, max_interval_days: 1 },
+    { item_id: 't:spaced', prompt: 'p', answer: 'a', active: '', max_interval_days: ' ' },
+    { item_id: 't:typo', prompt: 'p', answer: 'a', active: '', max_interval_days: 'each day' }
+  ]);
+  const byId = Object.fromEntries(parsed.items.map(i => [i.item_id, i]));
+
+  check('all five rows parse — a parked row is parsed, then filtered at selection',
+    parsed.items.length === 5, String(parsed.items.length));
+  check('the blank-active row is active', byId['t:blank_active'].active === true);
+  check('the boolean-false row is NOT active', byId['t:parked'].active === false);
+  check('the blank ceiling became the default', byId['t:blank_active'].max_interval_days === 21);
+  check('the space-only ceiling became the default', byId['t:spaced'].max_interval_days === 21);
+  check('the typed ceiling was kept', byId['t:volatile'].max_interval_days === 1);
+  check('an unreadable ceiling is warned about, not silently defaulted',
+    parsed.warnings.some(w => w.item_id === 't:typo'), JSON.stringify(parsed.warnings));
+
+  // And the end-to-end consequence: a parked row must never be selected.
+  const due = tr.selectDue(parsed.items, Date.now(), 10, 'seed').map(i => i.item_id);
+  check('a boolean-false row never reaches a session', !due.includes('t:parked'), due.join(','));
+  check('while the blank-active rows do', due.includes('t:blank_active'), due.join(','));
+}
+
+
 console.log('\n' + (fail === 0 ? `ALL ${pass} CHECKS PASSED` : `${pass} passed, ${fail} FAILED`));
 process.exit(fail === 0 ? 0 : 1);
