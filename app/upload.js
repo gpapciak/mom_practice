@@ -38,14 +38,24 @@ function block(columns, rows) {
   };
 }
 
-export function buildBatch(trialRows, sessionRows) {
-  return {
+/**
+ * Columns for the _events tab. Matches what the script's own logEvent_ writes, so
+ * client and server notices land in one readable list rather than two shapes.
+ */
+export const EVENT_COLUMNS = ['logged_at_ms', 'source', 'type', 'detail'];
+
+export function buildBatch(trialRows, sessionRows, eventRows) {
+  const batch = {
     batch_id: store.uuid(),
     kind: 'batch',
     trials: block(TRIAL_COLUMNS, trialRows),
     sessions: block(SESSION_COLUMNS, sessionRows),
     queued_at: Date.now()
   };
+  if (eventRows && eventRows.length) {
+    batch.events = block(EVENT_COLUMNS, eventRows);
+  }
+  return batch;
 }
 
 async function post(batch) {
@@ -136,8 +146,8 @@ async function cleanupLocal(batch) {
 }
 
 /** Queue a session's data. Does not upload — callers choose when. */
-export async function enqueue(trialRows, sessionRows) {
-  const batch = buildBatch(trialRows, sessionRows);
+export async function enqueue(trialRows, sessionRows, eventRows) {
+  const batch = buildBatch(trialRows, sessionRows, eventRows);
   await store.putOutbox(batch);
   return batch.batch_id;
 }

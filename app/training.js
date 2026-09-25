@@ -47,9 +47,29 @@
  *    duration. It never extends a session: the reaction-time blocks bracket the
  *    session to measure fatigue, and a longer session would silently change what
  *    that measure means.
+ *
+ * 6. A DATED FACT STOPS BEING PRACTISED ON THE DAY IT STOPS BEING TRUE.
+ *
+ *    "Chris comes on the 2nd" is wrong on the 3rd, and nothing in the app would
+ *    otherwise know. That is worse than not practising it: spaced retrieval
+ *    STRENGTHENS what it practises, so an expired item actively rehearses a
+ *    falsehood — and it would be reported as "got it", reinforcing it further.
+ *
+ *    expires_on is the last day an item is true; starts_on is the first. Both
+ *    inclusive, both compared against the local date rather than UTC, both stored
+ *    as DATES rather than as a countdown.
+ *
+ *    A countdown must never be stored as a number: a hand-typed "in 3 days" is wrong
+ *    tomorrow and nobody notices. The same reasoning rules out computing a moving
+ *    answer at render time for training — an interval that grows means more drift
+ *    between exposures, so advancing an item would make its remembered answer MORE
+ *    reliably wrong. For a moving target the schedule inverts, so a moving target
+ *    does not belong in retrieval practice at all. It belongs on a screen that is
+ *    read rather than recalled.
  */
 
 import { rng, shuffle } from './rng.js';
+import { parseSheetDate, daysBetween } from './dates.js';
 
 export const PROBE_ID = 'T_training';
 export const TRAINING_VERSION = 1;
@@ -180,6 +200,40 @@ export function capFor(maxDays) {
   return Math.min(m, STEPS[STEPS.length - 1]);
 }
 
+/** Warn this many days ahead, so there is time to write the replacement row. */
+export const EXPIRY_WARNING_DAYS = 3;
+
+/**
+ * Why an item is or is not in rotation today. Returns one of:
+ *
+ *   'active'      in rotation
+ *   'parked'      active column says no
+ *   'expired'     past expires_on. CONTENT staleness: the answer has stopped being
+ *                 true. Not to be confused with the probe queue's 'expired', which
+ *                 is MEASUREMENT staleness - a queued recognition test whose delay
+ *                 has aged past 21 days so the interval is no longer interpretable.
+ *                 Same word, two unrelated failures.
+ *   'not_yet'     before starts_on, so a replacement row can be queued in advance
+ *
+ * todayLocal is 'YYYY-MM-DD' in the project's fixed timezone. Both bounds are
+ * INCLUSIVE: expires_on is the last day the answer is true, so an off-by-one here
+ * would practise a falsehood for exactly one day.
+ */
+export function statusOf(item, todayLocal) {
+  if (!isActive(item.active)) return 'parked';
+  const from = parseSheetDate(item.starts_on);
+  const until = parseSheetDate(item.expires_on);
+  if (from && todayLocal < from) return 'not_yet';
+  if (until && todayLocal > until) return 'expired';
+  return 'active';
+}
+
+/** Days until an item expires, or null if it has no expiry. Negative once past. */
+export function daysToExpiry(item, todayLocal) {
+  const until = parseSheetDate(item.expires_on);
+  return until ? daysBetween(todayLocal, until) : null;
+}
+
 /**
  * Whether a row is in rotation.
  *
@@ -208,10 +262,11 @@ export function isActive(value) {
  * `cap` is set by how many trials fit the slot durations, never by how many are
  * due. Training expands to fill its slots and never beyond them.
  */
-export function selectDue(items, nowMs, cap, seed) {
+export function selectDue(items, nowMs, cap, seed, todayLocal) {
   const DAY = 86400000;
+  const today = todayLocal || null;
   const due = items
-    .filter(it => it.active !== false)
+    .filter(it => (today ? statusOf(it, today) === 'active' : it.active !== false))
     .map(it => {
       const last = it.last_tested_ms || null;
       const interval = Math.min(Number(it.interval_days) || STEPS[0],
@@ -238,11 +293,36 @@ export function selectDue(items, nowMs, cap, seed) {
  * later by the runner rather than here, because whether an item was missed is not
  * known until it is asked.
  */
-export function buildQueue(items, nowMs, cap, seed) {
-  return selectDue(items, nowMs, cap, seed).map(it => ({
+export function buildQueue(items, nowMs, cap, seed, todayLocal) {
+  return selectDue(items, nowMs, cap, seed, todayLocal).map(it => ({
     item: it,
     isRetest: false
   }));
+}
+
+/**
+ * What a human needs told, once per day.
+ *
+ * Expiry alone fixes the stale-answer half of the problem and not the
+ * nobody-notices half: an item silently vanishing is the same species of silent
+ * failure as one silently going stale. What is actually needed on the 3rd is not an
+ * absent row but a prompt to write "Chris is here until the 9th".
+ *
+ * Returns { expired, expiring, notYet } of item ids, so the caller can log them.
+ */
+export function contentNotices(items, todayLocal) {
+  const expired = [];
+  const expiring = [];
+  const notYet = [];
+  for (const it of items || []) {
+    const status = statusOf(it, todayLocal);
+    if (status === 'expired') { expired.push(it.item_id); continue; }
+    if (status === 'not_yet') { notYet.push(it.item_id); continue; }
+    if (status !== 'active') continue;
+    const d = daysToExpiry(it, todayLocal);
+    if (d !== null && d <= EXPIRY_WARNING_DAYS) expiring.push({ item_id: it.item_id, days: d });
+  }
+  return { expired, expiring, notYet };
 }
 
 /**
@@ -290,6 +370,16 @@ export function parseItems(rows) {
         + `number; using the default ${DEFAULT_MAX_INTERVAL_DAYS} days` });
     }
 
+    for (const col of ['starts_on', 'expires_on']) {
+      const raw = r[col];
+      if (raw !== null && raw !== undefined && String(raw).trim() !== ''
+          && parseSheetDate(raw) === null) {
+        warnings.push({ item_id: id, why: `${col} ${JSON.stringify(raw)} is not a readable `
+          + `date; this row has NO ${col === 'expires_on' ? 'expiry' : 'start date'} and will `
+          + `run regardless` });
+      }
+    }
+
     items.push({
       item_id: id,
       prompt,
@@ -302,6 +392,10 @@ export function parseItems(rows) {
       // answer that changes daily, so extending its interval does not test
       // retention - it tests a fact that is no longer true.
       max_interval_days: capFor(r.max_interval_days),
+      // Kept in whatever shape the Sheet sent. parseSheetDate normalises at the
+      // point of use, so a badly formatted cell cannot corrupt the stored item.
+      starts_on: r.starts_on === undefined ? null : r.starts_on,
+      expires_on: r.expires_on === undefined ? null : r.expires_on,
       active: isActive(r.active)
     });
   }

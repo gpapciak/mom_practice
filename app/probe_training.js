@@ -21,7 +21,7 @@
 
 import * as lifecycle from './lifecycle.js';
 import * as speech from './speech.js';
-import { RECALL, nextInterval, capFor, insertRetest } from './training.js';
+import { RECALL, nextInterval, capFor, insertRetest, daysToExpiry } from './training.js';
 
 export const PROBE_ID = 'T_training';
 export const TRAINING_VERSION = 1;
@@ -176,7 +176,8 @@ async function runOne(session, { screenEl, stage, entry, index }) {
     training_next_interval_days: entry.isRetest ? before : sched.interval_days,
     training_exposures: item.exposures || 0,
     training_is_retest: entry.isRetest ? 1 : 0,
-    training_max_interval_days: ceiling
+    training_max_interval_days: ceiling,
+    training_days_to_expiry: daysToExpiry(item, session.todayLocal)
   });
 
   // Errorless: bring a missed item back later so the session ends on a success.

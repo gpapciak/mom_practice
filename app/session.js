@@ -21,7 +21,7 @@
  * - Adult in tone throughout.
  */
 
-import { APP_VERSION, DEFAULTS, TIMING, TIMEZONE } from './config.js';
+import { APP_VERSION, DEFAULTS, TIMING } from './config.js';
 import * as store from './store.js';
 import * as layout from './layout.js';
 import * as speech from './speech.js';
@@ -30,6 +30,7 @@ import * as lifecycle from './lifecycle.js';
 import * as crt from './probe_crt.js';
 import * as train from './probe_training.js';
 import * as training from './training.js';
+import { localDateFor, localTimeFor } from './dates.js';
 
 /**
  * THE SESSION SKELETON. Frozen from the first collected row.
@@ -82,23 +83,9 @@ const screen = () => el('screen');
 
 /* ---------------------------------------------------------------- helpers */
 
-/**
- * The local date, computed in a fixed timezone rather than from the device's own
- * setting, so a laptop timezone change cannot silently shift the day boundary.
- */
-export function localDateFor(ms) {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: TIMEZONE, year: 'numeric', month: '2-digit', day: '2-digit'
-  }).formatToParts(new Date(ms));
-  const g = t => parts.find(p => p.type === t).value;
-  return `${g('year')}-${g('month')}-${g('day')}`;
-}
-
-export function localTimeFor(ms) {
-  return new Intl.DateTimeFormat('en-GB', {
-    timeZone: TIMEZONE, hour: '2-digit', minute: '2-digit', hour12: false
-  }).format(new Date(ms));
-}
+// Date handling lives in dates.js: the fixed day boundary and the three shapes a
+// spreadsheet date can arrive in are the same problem everywhere they appear.
+export { localDateFor, localTimeFor } from './dates.js';
 
 /** Resolves after ms, and reports whether it was interrupted. */
 function wait(ms) {
@@ -406,10 +393,23 @@ export class Session {
     // session and a missed item's re-ask can land in a later slot. Sized by the
     // phase's total training time: training fills its slots and never overruns them.
     const cap = train.capacityFor(trainingBudgetMs(this.phase));
+    this.todayLocal = localDateFor(this.startedAt);
     this.trainingQueue = training.buildQueue(
-      this.trainingItems || [], Date.now(), cap, this.seed + ':training');
+      this.trainingItems || [], Date.now(), cap, this.seed + ':training', this.todayLocal);
     this.log(`training: ${this.trainingQueue.length} due of ${(this.trainingItems || []).length}`
              + `, cap ${cap}`);
+
+    // Expiry is only half the job. An item that silently vanishes is the same kind of
+    // silent failure as one that silently goes stale, so what fired and what is about
+    // to fire both get recorded where a human will see them.
+    this.contentNotices = training.contentNotices(this.trainingItems || [], this.todayLocal);
+    if (this.contentNotices.expired.length) {
+      this.log(`content EXPIRED: ${this.contentNotices.expired.join(', ')}`);
+    }
+    if (this.contentNotices.expiring.length) {
+      this.log('content expiring soon: '
+        + this.contentNotices.expiring.map(e => `${e.item_id} in ${e.days}d`).join(', '));
+    }
 
     this.watcher = lifecycle.watch({
       getState: () => ({ session_uid: this.uid, stage: this.stage }),
@@ -457,7 +457,7 @@ export class Session {
     }
     const rows = await store.trialsForSession(this.uid);
     await store.putSession(sessionRow);
-    await upload.enqueue(rows, [sessionRow]);
+    await upload.enqueue(rows, [sessionRow], await this.contentEvents());
 
     lifecycle.clearAlive();
     // After the closing screen is already up, so never in a timed path.
@@ -588,6 +588,53 @@ export class Session {
     }
     if (m.extentU > (this.maxExtentU || 0)) this.maxExtentU = m.extentU;
     return m;
+  }
+
+  /**
+   * Content notices, as rows for the _events tab.
+   *
+   * Written where a human already looks - the Sheet - because the point is to prompt
+   * an edit, not to sit in a log nobody opens. What is needed on the 3rd is not an
+   * absent row but "write: Chris is here until the 9th".
+   *
+   * Deduplicated per item per local date. An expiring item would otherwise report
+   * itself every session for three days running, and a noisy list is one nobody
+   * reads, which defeats the whole purpose of surfacing it.
+   */
+  async contentEvents() {
+    const n = this.contentNotices;
+    if (!n) return [];
+    const seen = (await store.getMeta('notice_log', {})) || {};
+    const today = this.todayLocal;
+    const rows = [];
+
+    const once = (key, type, detail) => {
+      if (seen[key] === today) return;
+      seen[key] = today;
+      rows.push([Date.now(), 'client', type, detail]);
+    };
+
+    for (const id of n.expired) {
+      once(`${id}:expired`, 'training_expired',
+        `${id} passed its expires_on and is no longer being practised. `
+        + `Replace the row with one that is true now.`);
+    }
+    for (const e of n.expiring) {
+      once(`${e.item_id}:expiring:${e.days}`, 'training_expiring_soon',
+        `${e.item_id} expires in ${e.days} day(s). Write its replacement before then.`);
+    }
+    for (const id of n.notYet) {
+      once(`${id}:not_yet`, 'training_not_yet_started',
+        `${id} is queued and starts on its starts_on date.`);
+    }
+
+    // Keep the ledger from growing without bound; only recent keys matter.
+    const keys = Object.keys(seen);
+    if (keys.length > 500) {
+      for (const k of keys.slice(0, keys.length - 500)) delete seen[k];
+    }
+    await store.setMeta('notice_log', seen);
+    return rows;
   }
 
   log(msg) {

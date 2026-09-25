@@ -1006,5 +1006,148 @@ section('22. what a blank cell means, and the boolean Sheets really sends');
 }
 
 
+/* ================================= 23. dates from a hand-edited spreadsheet */
+
+section('23. the three shapes a spreadsheet date arrives in');
+{
+  installBrowser();
+  const d = await import('../app/dates.js');
+
+  check('a plain-text cell is used as-is', d.parseSheetDate('2026-10-02') === '2026-10-02');
+
+  // Sheets may store the cell as a real date, in which case JSON gives a UTC instant
+  // at midnight IN THE SHEET'S TIMEZONE. Slicing ten characters looks right and is
+  // wrong for any positive offset.
+  check('a Date from a sheet behind UTC resolves correctly',
+    d.parseSheetDate('2026-10-02T07:00:00.000Z') === '2026-10-02');
+  check('a Date from a sheet AHEAD of UTC resolves correctly too',
+    d.parseSheetDate('2026-10-01T22:00:00.000Z') === '2026-10-02',
+    d.parseSheetDate('2026-10-01T22:00:00.000Z'));
+  check('which a naive ten-character slice would get wrong',
+    '2026-10-01T22:00:00.000Z'.slice(0, 10) === '2026-10-01');
+  check('a UTC sheet resolves correctly', d.parseSheetDate('2026-10-02T00:00:00.000Z') === '2026-10-02');
+  check('a real Date object works', d.parseSheetDate(new Date('2026-10-02T07:00:00Z')) === '2026-10-02');
+  check('a spreadsheet serial number works', d.parseSheetDate(46297) === '2026-10-02',
+    String(d.parseSheetDate(46297)));
+
+  check('blank is not a date', d.parseSheetDate('') === null);
+  check('whitespace is not a date', d.parseSheetDate('   ') === null);
+  check('null is not a date', d.parseSheetDate(null) === null);
+  check('prose is not a date', d.parseSheetDate('early October') === null);
+  check('an implausible serial is not a date', d.parseSheetDate(0) === null);
+
+  check('day arithmetic is whole days', d.daysBetween('2026-10-02', '2026-10-09') === 7);
+  check('and signed', d.daysBetween('2026-10-09', '2026-10-02') === -7);
+  // A DST transition falls between these two dates in the project timezone.
+  check('a DST transition does not shift the count',
+    d.daysBetween('2026-10-25', '2026-11-05') === 11,
+    String(d.daysBetween('2026-10-25', '2026-11-05')));
+}
+
+section('24. expiry and starts_on: inclusive, local, and visible');
+{
+  installBrowser();
+  const tr = await import('../app/training.js?v=24');
+
+  const item = (over, extra) => Object.assign(
+    { item_id: 't:x', prompt: 'p', answer: 'a', interval_days: 1, last_tested_ms: null },
+    over, extra);
+
+  /* ---- expires_on is INCLUSIVE: the last day the answer is true ---- */
+  const chris = item({ expires_on: '2026-10-02' });
+  check('valid the day before', tr.statusOf(chris, '2026-10-01') === 'active');
+  check('STILL valid ON the expiry date', tr.statusOf(chris, '2026-10-02') === 'active',
+    tr.statusOf(chris, '2026-10-02'));
+  check('expired the day after', tr.statusOf(chris, '2026-10-03') === 'expired',
+    tr.statusOf(chris, '2026-10-03'));
+  check('and stays expired', tr.statusOf(chris, '2026-12-25') === 'expired');
+
+  /* ---- starts_on is INCLUSIVE too ---- */
+  const queued = item({ starts_on: '2026-10-02' });
+  check('not yet, the day before', tr.statusOf(queued, '2026-10-01') === 'not_yet');
+  check('active ON the start date', tr.statusOf(queued, '2026-10-02') === 'active');
+  check('and after', tr.statusOf(queued, '2026-10-05') === 'active');
+
+  /* ---- a replacement row: both bounds ---- */
+  const window = item({ starts_on: '2026-10-02', expires_on: '2026-10-08' });
+  check('before the window', tr.statusOf(window, '2026-10-01') === 'not_yet');
+  check('inside it', tr.statusOf(window, '2026-10-05') === 'active');
+  check('after it', tr.statusOf(window, '2026-10-09') === 'expired');
+
+  /* ---- parked still wins over any window ---- */
+  check('a parked row is parked even inside its window',
+    tr.statusOf(item({ starts_on: '2026-10-01', expires_on: '2026-10-30', active: false }),
+      '2026-10-05') === 'parked');
+
+  /* ---- no dates: unchanged behaviour ---- */
+  check('an undated row is simply active', tr.statusOf(item({}), '2026-10-05') === 'active');
+  check('a blank expires_on does not expire it',
+    tr.statusOf(item({ expires_on: '' }), '2030-01-01') === 'active');
+  check('an unreadable expires_on does not expire it either — it warns instead',
+    tr.statusOf(item({ expires_on: 'early October' }), '2030-01-01') === 'active');
+
+  /* ---- a Date-serialised bound still lands on the right day ---- */
+  check('a Date-serialised expiry from a sheet ahead of UTC is still inclusive',
+    tr.statusOf(item({ expires_on: '2026-10-01T22:00:00.000Z' }), '2026-10-02') === 'active'
+    && tr.statusOf(item({ expires_on: '2026-10-01T22:00:00.000Z' }), '2026-10-03') === 'expired');
+
+  /* ---- days to expiry, logged on the row ---- */
+  check('days to expiry counts down', tr.daysToExpiry(chris, '2026-09-29') === 3);
+  check('zero on the last valid day', tr.daysToExpiry(chris, '2026-10-02') === 0);
+  check('negative once past', tr.daysToExpiry(chris, '2026-10-05') === -3);
+  check('null when undated', tr.daysToExpiry(item({}), '2026-10-05') === null);
+
+  /* ---- an expired item never reaches a session ---- */
+  const items = [
+    item({ item_id: 't:visitors' }),
+    item({ item_id: 't:chris-arrives', expires_on: '2026-10-02' }),
+    item({ item_id: 't:kathy-arrives', expires_on: '2026-10-08' })
+  ];
+  const due = day => tr.selectDue(items, Date.UTC(2026, 9, 5), 10, 'seed', day)
+    .map(i => i.item_id);
+  check('on the 1st, all three are in rotation', due('2026-10-01').length === 3, due('2026-10-01').join());
+  check('on the 3rd, the Chris row is gone', !due('2026-10-03').includes('t:chris-arrives'),
+    due('2026-10-03').join());
+  check('but the Kathy row remains', due('2026-10-03').includes('t:kathy-arrives'));
+  check('on the 9th, both dated rows are gone',
+    due('2026-10-09').join() === 't:visitors', due('2026-10-09').join());
+  check('and the graceful row survives all of it', due('2026-12-01').includes('t:visitors'));
+
+  /* ---- the notices, which are the other half of the job ---- */
+  let n = tr.contentNotices(items, '2026-09-30');
+  check('an item expiring in 2 days is surfaced',
+    n.expiring.some(e => e.item_id === 't:chris-arrives' && e.days === 2),
+    JSON.stringify(n.expiring));
+  check('one expiring in 8 days is not yet noisy',
+    !n.expiring.some(e => e.item_id === 't:kathy-arrives'), JSON.stringify(n.expiring));
+  check('nothing has expired yet', n.expired.length === 0);
+
+  n = tr.contentNotices(items, '2026-10-03');
+  check('once past, it is reported as expired', n.expired.includes('t:chris-arrives'),
+    JSON.stringify(n.expired));
+  check('and is no longer merely expiring',
+    !n.expiring.some(e => e.item_id === 't:chris-arrives'));
+
+  n = tr.contentNotices([item({ item_id: 't:later', starts_on: '2026-11-01' })], '2026-10-03');
+  check('a queued replacement is reported as not yet started',
+    n.notYet.includes('t:later'), JSON.stringify(n.notYet));
+
+  /* ---- parsing carries the columns and warns on an unreadable date ---- */
+  const parsed = tr.parseItems([
+    { item_id: 't:a', prompt: 'p', answer: 'a', expires_on: '2026-10-02' },
+    { item_id: 't:b', prompt: 'p', answer: 'a', expires_on: 'sometime soon' },
+    { item_id: 't:c', prompt: 'p', answer: 'a', starts_on: 'whenever' }
+  ]);
+  check('a readable date is carried through', parsed.items[0].expires_on === '2026-10-02');
+  check('an unreadable expiry warns, because the row then has none',
+    parsed.warnings.some(w => w.item_id === 't:b' && /expires_on/.test(w.why)),
+    JSON.stringify(parsed.warnings));
+  check('an unreadable start date warns too',
+    parsed.warnings.some(w => w.item_id === 't:c' && /starts_on/.test(w.why)));
+  check('an absent column produces no warning',
+    !parsed.warnings.some(w => w.item_id === 't:a'));
+}
+
+
 console.log('\n' + (fail === 0 ? `ALL ${pass} CHECKS PASSED` : `${pass} passed, ${fail} FAILED`));
 process.exit(fail === 0 ? 0 : 1);
