@@ -1591,5 +1591,66 @@ section('34. an interrupted session is distinguishable from one never begun');
 }
 
 
+/* ========================= 35. the training slot has a ceiling, not just a floor */
+
+section('35. a slow slot cannot push crt_2 later');
+{
+  installBrowser();
+  const tr = await import('../app/probe_training.js?v=35');
+  const sess = await import('../app/session.js?v=35');
+
+  /*
+   * THE COMMENT ON runSlot USED TO CLAIM IT NEVER OVERRAN ITS SLOT. It never checked
+   * the clock at all: it stopped after floor(slotMs / MS_PER_ITEM) items.
+   *
+   * The count assumes an item costs MS_PER_ITEM. An UNANSWERED one costs
+   * REVEAL_GATE_MS + NO_RESPONSE_MS + a dwell. So the opening slot, budgeted at 100s
+   * for 4 items, could run for eight and a half minutes, and crt_2 - the within-session
+   * fatigue measure - would move by that much.
+   */
+  const worstItem = tr.REVEAL_GATE_MS + tr.NO_RESPONSE_MS;
+  check('an unanswered item costs far more than the per-item assumption',
+    worstItem > tr.MS_PER_ITEM * 4, `${worstItem} vs ${tr.MS_PER_ITEM}`);
+
+  const opening = sess.SKELETON.find(x => x.slot === 'opening');
+  check('and more than the whole opening slot, which is the crux',
+    worstItem > opening.ms, `${worstItem} vs ${opening.ms}`);
+  // 4 items x 125s = 500s against a 100s slot: a five-fold overrun, and crt_2 with it.
+  const worstSlot = tr.capacityFor(opening.ms) * worstItem;
+  check('so the old item COUNT alone could not bound the slot',
+    worstSlot >= opening.ms * 5,
+    `${tr.capacityFor(opening.ms)} items x ${worstItem}ms = ${worstSlot}ms`
+    + ` against a ${opening.ms}ms slot`);
+
+  // The floor that cannot be trimmed away: being cut off mid-thought is unkind and it
+  // breaks the practice, because spaced retrieval needs the retrieval attempted.
+  check('there is a minimum response window', tr.MIN_RESPONSE_MS >= 15000,
+    String(tr.MIN_RESPONSE_MS));
+  check('and it is well under the ordinary timeout, so it only binds when tight',
+    tr.MIN_RESPONSE_MS < tr.NO_RESPONSE_MS);
+
+  /*
+   * What has to stay fixed is crt_2's POSITION, not each slot's individual length.
+   * Overrun is carried as a debt and paid out of later slots' padding, so a session
+   * whose training slots together fit their combined budget has an untouched fatigue
+   * measure. This is the arithmetic that makes that possible.
+   */
+  const trainingSlots = sess.SKELETON.filter(x => String(x.phase1).startsWith('training'));
+  const combined = trainingSlots.reduce((n, x) => n + x.ms, 0);
+  check('there are four training slots in phase 1', trainingSlots.length === 4,
+    String(trainingSlots.length));
+  check('with a combined budget worth absorbing into', combined >= 300000, String(combined));
+  check('one worst-case item fits inside the combined budget, so it is payable',
+    worstItem < combined, `${worstItem} vs ${combined}`);
+
+  // The skeleton itself must not have moved.
+  const names = sess.SKELETON.map(x => x.slot).join(',');
+  check('slot order and identity are unchanged',
+    names === 'opening,crt_1,encode,fill_1,recog_s,fill_2,recog_m,crt_2', names);
+  check('both reaction-time blocks still take their duration from the block, not a slot',
+    sess.SKELETON.filter(x => x.slot.startsWith('crt')).every(x => x.ms === null));
+}
+
+
 console.log('\n' + (fail === 0 ? `ALL ${pass} CHECKS PASSED` : `${pass} passed, ${fail} FAILED`));
 process.exit(fail === 0 ? 0 : 1);

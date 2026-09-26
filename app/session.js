@@ -621,15 +621,41 @@ export class Session {
       this.checkFits(stage);
       this.log(`${stage}: ${n} items, ${this.trainingQueue.length} left in queue`);
 
-      // THE SLOT MUST CONSUME ITS DURATION whether or not there was content to fill
-      // it. Otherwise a day with few items due ends the slot early, every later
-      // stage arrives early, and crt_2 moves - which destroys the one thing the
-      // skeleton exists to guarantee. With 12 items against a 310s budget that was
-      // about 94 seconds of drift, varying day to day with how many were due.
-      const left = slotMs - (Date.now() - started);
+      /*
+       * THE SLOT MUST CONSUME ITS DURATION, and must not exceed it either.
+       *
+       * The floor: without padding, a day with few items due ends the slot early, every
+       * later stage arrives early, and crt_2 moves - which destroys the one thing the
+       * skeleton exists to guarantee. With 12 items against a 310s budget that was about
+       * 94 seconds of drift, varying day to day with how many were due.
+       *
+       * The ceiling: a slot can also run LONG, because an item already begun cannot be
+       * abandoned mid-thought. probe_training now refuses to start an item it cannot
+       * finish, which bounds the overrun to one item, but does not eliminate it.
+       *
+       * So overrun is carried as a debt and paid out of later slots' padding. What has
+       * to stay fixed is crt_2's position in the session, not each slot's individual
+       * length - so as long as the training slots together fit their combined budget,
+       * the fatigue measure is untouched. Residual debt at the end is logged rather
+       * than hidden, because a session that genuinely ran long is a session whose
+       * crt_2 means something slightly different.
+       */
+      const elapsed = Date.now() - started;
+      this.slotDebtMs = (this.slotDebtMs || 0) + Math.max(0, elapsed - slotMs);
+
+      let left = slotMs - elapsed;
+      if (left > 0 && this.slotDebtMs > 0) {
+        const paid = Math.min(left, this.slotDebtMs);
+        this.slotDebtMs -= paid;
+        left -= paid;
+        this.log(`${stage}: absorbed ${Math.round(paid / 1000)}s of earlier overrun`);
+      }
       if (left > 1500) {
         this.log(`${stage}: padding ${Math.round(left / 1000)}s to hold the slot`);
         await this.runFiller(stage, left);
+      }
+      if (this.slotDebtMs > 1500) {
+        this.log(`${stage}: ${Math.round(this.slotDebtMs / 1000)}s of overrun still owed`);
       }
       return;
     }

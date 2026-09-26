@@ -51,6 +51,16 @@ export const REVEAL_GATE_MS = 5000;
  */
 export const NO_RESPONSE_MS = 120000;
 
+/**
+ * However tight the slot gets, never give less than this to answer.
+ *
+ * The slot ceiling below can shorten a response window, and it must not be allowed to
+ * shorten it to nothing: being cut off mid-thought is both unkind and bad for the
+ * practice, because spaced retrieval depends on the retrieval actually being attempted.
+ * Below this the honest thing is not to start the item at all.
+ */
+export const MIN_RESPONSE_MS = 20000;
+
 const ANSWER_DWELL_MS = 2000;
 const MISS_DWELL_MS = 3400;
 
@@ -144,27 +154,64 @@ function awaitClick(nodes, { onStale, timeoutMs = NO_RESPONSE_MS } = {}) {
 /**
  * Runs training for one slot, consuming from the session's shared queue.
  *
- * The queue is session-level rather than slot-level so an item is never asked
- * twice in one session and a missed item's re-ask can land in a later slot.
+ * The queue is session-level rather than slot-level so an item is never asked twice in
+ * one session and a missed item's re-ask can land in a later slot.
  *
- * Stops when the slot's time budget is spent, never mid-item: training fills its
- * slot and never overruns it, because session length is what the reaction-time
- * bracket measures fatigue against.
+ * THE CEILING, AND WHY THE OLD COMMENT HERE WAS A LIE
+ * --------------------------------------------------
+ * This used to claim it "stops when the slot's time budget is spent, never overruns
+ * it". It did no such thing. It stopped after a fixed COUNT of items -
+ * `floor(slotMs / MS_PER_ITEM)` - and never looked at the clock at all.
+ *
+ * The count assumes each item costs MS_PER_ITEM (24s). An unanswered one costs
+ * REVEAL_GATE_MS + NO_RESPONSE_MS + a dwell, about 128s. So the opening slot, budgeted
+ * at 100s for 4 items, could run for eight and a half minutes. Across all four training
+ * slots the worst case was roughly 25 minutes against a 310s budget.
+ *
+ * That is not a cosmetic overrun. It pushes `crt_2` minutes later, and `crt_2 - crt_1`
+ * is the within-session fatigue measure - which means something only while the two
+ * blocks sit at the same points in the same-length session every day. A slot with a
+ * floor (the padding in session.js) and no ceiling gets the guarantee exactly half
+ * right.
+ *
+ * So now: a deadline. No new item is started once the slot's time is gone, and no item
+ * is started that cannot be finished within it, using the worst case rather than the
+ * average - because an item begun and cut short is the case that hurts. The response
+ * window is trimmed to what remains, never below MIN_RESPONSE_MS.
+ *
+ * Residual overrun is still possible, because an item already running cannot be
+ * abandoned. It is bounded by one item's worst case and it is reported, so
+ * session.js can absorb it out of a later slot's padding.
  */
 export async function runSlot(session, { screenEl, stage, slotMs }) {
   const budget = capacityFor(slotMs);
+  const startedAt = Date.now();
+  const deadline = startedAt + slotMs;
   let done = 0;
 
   while (done < budget && session.trainingQueue.length && !session.ended) {
+    const remaining = deadline - Date.now();
+    // Enough left to finish the WORST case, not the average one. An item begun and
+    // then cut short by the clock is worse than an item not begun.
+    if (remaining < REVEAL_GATE_MS + MIN_RESPONSE_MS + MISS_DWELL_MS) break;
+
     const entry = session.trainingQueue.shift();
-    await runOne(session, { screenEl, stage, entry, index: done });
+    await runOne(session, { screenEl, stage, entry, index: done, deadline });
     done++;
     if (done % 3 === 0) await session.flush();
   }
   return done;
 }
 
-async function runOne(session, { screenEl, stage, entry, index }) {
+async function runOne(session, { screenEl, stage, entry, index, deadline }) {
+  /**
+   * How long to wait for this click: what the slot has left, capped by the ordinary
+   * timeout and floored so nobody is cut off mid-thought. Without a deadline - the
+   * errorless re-ask path passes none - it is the ordinary timeout.
+   */
+  const waitMs = () => (deadline
+    ? Math.max(MIN_RESPONSE_MS, Math.min(NO_RESPONSE_MS, deadline - Date.now()))
+    : NO_RESPONSE_MS);
   const item = entry.item;
   const audio = !!session.config.audio_enabled;
 
@@ -190,7 +237,7 @@ async function runOne(session, { screenEl, stage, entry, index }) {
     revealAvailableAt = await new Promise(r => requestAnimationFrame(t => r(t)));
   }
   const reveal = await awaitClick([btn].filter(Boolean),
-    { onStale: () => session.veil('stale-click') });
+    { onStale: () => session.veil('stale-click'), timeoutMs: waitMs() });
   const revealMs = (reveal.at != null && revealAvailableAt != null)
     ? Math.max(0, Math.round(reveal.at - revealAvailableAt)) : null;
 
@@ -199,7 +246,7 @@ async function runOne(session, { screenEl, stage, entry, index }) {
 
   const picked = await awaitClick(
     [...screenEl.querySelectorAll('.choices button')],
-    { onStale: () => session.veil('stale-click') });
+    { timeoutMs: waitMs(), onStale: () => session.veil('stale-click') });
   const recall = picked.value || RECALL.OMITTED;
 
   /* ---- 3. close warmly. A miss is answered, never marked ---- */
