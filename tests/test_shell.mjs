@@ -1405,5 +1405,45 @@ section('30. the company question distinguishes being helped');
 }
 
 
+/* ========================= 31. which route a session came from */
+
+section('31. the Dock app and a Safari tab are distinguishable in the data');
+{
+  installBrowser();
+  const lay = await import('../app/layout.js?v=31');
+
+  /*
+   * WHY THIS MATTERS ENOUGH TO BE A COLUMN. Adding the app to the Dock gives it a
+   * SEPARATE STORAGE CONTAINER from Safari. So the same machine presents as two
+   * devices: different device_id, independent session_seq counters, and a
+   * days_since_prev_session computed from only one container's history - wrong in a
+   * way that looks entirely plausible. The user agent is identical for both, so
+   * without this the route is only recoverable by device_id archaeology.
+   */
+  global.matchMedia = q => ({ matches: q.includes('standalone') });
+  check('the Dock app reports standalone', lay.displayMode() === 'standalone', lay.displayMode());
+
+  global.matchMedia = q => ({ matches: q.includes('browser') });
+  check('a Safari tab reports browser', lay.displayMode() === 'browser', lay.displayMode());
+
+  // Never throw and never guess: an unknown route is better than a wrong one.
+  global.matchMedia = () => ({ matches: false });
+  check('neither matching gives unknown, not a guess', lay.displayMode() === 'unknown');
+  global.matchMedia = () => { throw new Error('nope'); };
+  check('a throwing matchMedia gives unknown rather than breaking the session',
+    lay.displayMode() === 'unknown');
+  delete global.matchMedia;
+  check('no matchMedia at all is also unknown', lay.displayMode() === 'unknown');
+
+  const cols = await import('../app/columns.js?v=31');
+  check('display_mode is on the session row', cols.SESSION_COLUMNS.includes('display_mode'));
+  check('and appended at the END, because rows are already being collected',
+    cols.SESSION_COLUMNS[cols.SESSION_COLUMNS.length - 1] === 'display_mode',
+    cols.SESSION_COLUMNS.slice(-2).join(','));
+  check('it is NOT on the trial row - it is a property of the session',
+    !cols.TRIAL_COLUMNS.includes('display_mode'));
+}
+
+
 console.log('\n' + (fail === 0 ? `ALL ${pass} CHECKS PASSED` : `${pass} passed, ${fail} FAILED`));
 process.exit(fail === 0 ? 0 : 1);

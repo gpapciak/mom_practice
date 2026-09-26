@@ -179,3 +179,26 @@ export function driftFlag(u, history) {
   const d = Math.abs(u - m) / m;
   return d > 0.05 ? 'major' : (d > 0.02 ? 'minor' : 'none');
 }
+
+/**
+ * Which route this session came from: the Dock app, or an ordinary browser tab.
+ *
+ * The two are SEPARATE STORAGE CONTAINERS, so the same machine presents as two
+ * devices - different `device_id`, independent `session_seq`, and a
+ * `days_since_prev_session` computed from only one container's history, which is
+ * wrong in a way that looks entirely plausible. The user agent is identical for both,
+ * so nothing else in the row distinguishes them.
+ *
+ * `display-mode: standalone` is the one reliable discriminator, and it is a media
+ * query rather than a sniff.
+ */
+export function displayMode() {
+  try {
+    if (typeof matchMedia !== 'function') return 'unknown';
+    if (matchMedia('(display-mode: standalone)').matches) return 'standalone';
+    if (matchMedia('(display-mode: browser)').matches) return 'browser';
+    return 'unknown';
+  } catch (e) {
+    return 'unknown';
+  }
+}

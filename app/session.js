@@ -374,6 +374,10 @@ export class Session {
       screen_h: window.screen.height,
       ua_string: navigator.userAgent,
       storage_persisted: !!this.persisted,
+      // Which route this came from. The Dock app and a Safari tab are separate
+      // storage containers, so the same machine presents as two devices; nothing
+      // else on the row tells them apart.
+      display_mode: layout.displayMode(),
       uploaded_at_utc: null,     // stamped by the endpoint, never by the client
       batch_id: null
     };

@@ -32,7 +32,7 @@ export const TRIAL_COLUMNS = [
 
 export const TRIAL_SCHEMA_VERSION = 1;
 
-/** schema_version 1, revision 1.5-pre-collection */
+/** schema_version 1, revision 1.6-pre-collection */
 export const SESSION_COLUMNS = [
   'session_uid', 'schema_version', 'app_version', 'device_id',
   'session_seq', 'session_date_local', 'opened_at_utc',
@@ -44,6 +44,7 @@ export const SESSION_COLUMNS = [
   'viewport_h', 'dpr', 'visual_viewport_scale', 'stage_px',
   'zoom_drift_flag', 'screen_w', 'screen_h', 'ua_string',
   'storage_persisted', 'uploaded_at_utc', 'batch_id', 'speech_voice',
+  'display_mode',
 ];
 
 export const SESSION_SCHEMA_VERSION = 1;
