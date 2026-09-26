@@ -241,6 +241,11 @@ export class Session {
     await this.flush();
     // Best effort, outside any timed task. COLLECTING gates the actual POST.
     upload.drain().catch(() => {});
+    // AND a beacon, because going hidden is often the lid closing, and a fetch in
+    // flight when the page is frozen is simply dropped. The beacon survives that;
+    // nothing is deleted on the strength of it, so a duplicate is the worst case and
+    // the endpoint's ledger absorbs those.
+    upload.beaconOutbox().catch(() => {});
   }
 
   /* ---------------- rows ---------------- */
@@ -487,7 +492,11 @@ export class Session {
 
     const rows = await store.trialsForSession(this.uid);
     await store.putSession(sessionRow);
-    await upload.enqueue(rows, [sessionRow], await this.contentEvents());
+    // Content notices from this session, plus anything queued earlier that had no
+    // batch to travel in - an eviction detected at boot, a batch quarantined on a
+    // previous drain.
+    const events = (await this.contentEvents()).concat(await store.takeQueuedEvents());
+    await upload.enqueue(rows, [sessionRow], events);
 
     lifecycle.clearAlive();
     // After the closing screen is already up, so never in a timed path.

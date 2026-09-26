@@ -127,6 +127,12 @@ export async function drain({ onlyIfCollecting = true } = {}) {
       batch.quarantined_at = Date.now();
       await store.putOutbox(batch);
       result.quarantined++;
+      // A quarantined batch means either a client bug or an attack on the endpoint,
+      // and until now it was reported only to the debug pane - which nobody is
+      // looking at, least of all from another country. Queue an event so the NEXT
+      // batch carries the news into the Sheet, where it can actually be seen.
+      await store.queueEvent('batch_quarantined',
+        `${batch.batch_id}: ${batch.quarantine_reason}`);
     }
   }
   return result;
@@ -218,6 +224,66 @@ export async function postTrainingProgress(updates) {
     return await res.json();
   } catch (e) {
     return { ok: false, retryable: true, error: String(e) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Fire every pending batch with sendBeacon, for the moment the page is going away.
+ *
+ * WHY THIS EXISTS. `drain()` is an async fetch. When the lid closes or the tab is
+ * closed, the page can be frozen or torn down with that fetch still in flight, and
+ * the request is simply dropped. So the one moment the outbox most needs emptying is
+ * the moment the normal path is least likely to finish.
+ *
+ * `sendBeacon` is the browser API for exactly this: the request is handed to the
+ * browser, which is obliged to send it even after the page is gone.
+ *
+ * THE CATCH, AND WHY IT IS FINE. A beacon cannot be read, so there is no way to know
+ * whether it landed, and therefore no way to safely delete the batch. So nothing is
+ * deleted: the batch stays in the outbox and is posted again by the next session. The
+ * endpoint's `_batches` ledger recognises the repeat and reports it as a duplicate
+ * without writing a second copy. Idempotency is what makes an unacknowledged send
+ * safe, and this is the case it was built for.
+ *
+ * Returns the number of batches handed over, which is not the number that arrived.
+ */
+export async function beaconOutbox() {
+  if (!COLLECTING || !TOKEN || typeof navigator === 'undefined' ||
+      typeof navigator.sendBeacon !== 'function') return 0;
+  let handed = 0;
+  try {
+    const batches = (await store.allOutbox()).filter(b => !b.quarantined);
+    for (const batch of batches) {
+      const body = new Blob([JSON.stringify({ token: TOKEN, ...batch })],
+        { type: CONTENT_TYPE });
+      // Returns false when the payload is over the browser's beacon limit (64 KB in
+      // Safari). A refusal is not a failure to handle: the batch is still in the
+      // outbox, and the next session posts it normally with no size limit.
+      if (navigator.sendBeacon(ENDPOINT, body)) handed++;
+    }
+  } catch (e) { /* the outbox is intact either way */ }
+  return handed;
+}
+
+/**
+ * The newest session the SERVER knows about.
+ *
+ * Used once, at boot, to tell an evicted device from a new one. See
+ * `recoverFromEviction` in main.js.
+ */
+export async function fetchLastSession({ timeoutMs = 4000 } = {}) {
+  if (!TOKEN) return null;
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    const url = ENDPOINT + '?action=last_session&token=' + encodeURIComponent(TOKEN);
+    const res = await fetch(url, { signal: ctl.signal });
+    const json = await res.json();
+    return json && json.ok ? json : null;
+  } catch (e) {
+    return null;
   } finally {
     clearTimeout(timer);
   }

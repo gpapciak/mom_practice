@@ -61,6 +61,7 @@ public page can do.
 node tests/check_no_personal.mjs   # nothing here may describe the individual who uses it
 node tests/test_shell.mjs          # session shell: interruptions, geometry, screens, columns
 node tests/test_pool.mjs           # item pool: manifest, selector, queue, forward simulation
+node tests/test_upload.mjs         # delivery: outbox, drain, beacon, storage eviction
 ```
 
 All three run automatically on commit via `.githooks/pre-commit`, enabled with:

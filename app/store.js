@@ -106,6 +106,36 @@ export async function nextSessionSeq() {
 
 export function peekSessionSeq() { return getMeta('session_seq', 0); }
 
+/**
+ * Notices that must reach the Sheet, held until a batch can carry them.
+ *
+ * Some things worth knowing happen when no batch is being built - a storage
+ * eviction is detected at boot, a batch is quarantined during a drain. Posting each
+ * one immediately would mean a second network path to get wrong, so instead they
+ * queue here and ride along with the next session's batch.
+ *
+ * Capped, because this is a queue that only drains when a session completes, and an
+ * unbounded list of notices about failures is its own failure.
+ */
+const MAX_QUEUED_EVENTS = 50;
+
+export async function queueEvent(type, detail) {
+  try {
+    const q = (await getMeta('pending_events', [])) || [];
+    q.push({ logged_at_ms: Date.now(), source: 'client', type, detail: String(detail || '') });
+    await setMeta('pending_events', q.slice(-MAX_QUEUED_EVENTS));
+  } catch (e) { /* a lost notice must never break a session */ }
+}
+
+/** Read and clear. Called while a batch is being assembled. */
+export async function takeQueuedEvents() {
+  try {
+    const q = (await getMeta('pending_events', [])) || [];
+    if (q.length) await setMeta('pending_events', []);
+    return q;
+  } catch (e) { return []; }
+}
+
 /* ---------- trials ---------- */
 
 export function putTrials(rows) {

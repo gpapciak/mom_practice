@@ -27,7 +27,7 @@ fi
 
 # The test suites run here too, for the same reason: a suite that is only run when
 # someone remembers is a suite that passes on the commits nobody checked.
-for suite in tests/test_shell.mjs tests/test_pool.mjs; do
+for suite in tests/test_shell.mjs tests/test_pool.mjs tests/test_upload.mjs; do
   if ! node "$suite" >/tmp/suite.$$ 2>&1; then
     tail -30 /tmp/suite.$$ >&2
     rm -f /tmp/suite.$$

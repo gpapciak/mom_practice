@@ -96,6 +96,11 @@ async function boot() {
 
   drawOpening();
 
+  // Not awaited: it makes one network call and must never delay START. It only ever
+  // matters on a device whose storage has just been wiped, and on that device there
+  // is nothing to delay.
+  recoverFromEviction().catch(() => {});
+
   // Neither of these may block START.
   upload.drain().then(res => {
     if (res.config) {
@@ -187,6 +192,51 @@ async function reconcileLastAlive() {
   await store.putSession(row);
   await upload.enqueue(trials, [row]);
   debugLog(`recovered interrupted session ${row.session_uid.slice(0, 8)}: ${row.end_reason}`);
+}
+
+/**
+ * Tell an evicted device from a new one, and say so in the record.
+ *
+ * Storage measured NON-PERSISTENT on the target machine, so Safari may delete every
+ * byte this app has written. That is not a hypothetical: Safari's policy deletes all
+ * script-writable storage for an origin after seven days without interaction.
+ *
+ * WHAT EVICTION COSTS, and why silence is the worst part of it:
+ *
+ *   - an unsent batch is destroyed. There is no recovering that.
+ *   - `session_seq` resets to 0, so the practice-effect covariate restarts at 1 and
+ *     the series looks like a new participant.
+ *   - `days_since_prev_session` is computed from local history, so the first session
+ *     after an eviction reports null instead of the real gap.
+ *   - the cached config and training content go, and come back on the next network
+ *     answer.
+ *
+ * None of that announces itself. Read from a distance, a destroyed session looks
+ * exactly like a session nobody did - which is the one ambiguity this record cannot
+ * afford, because whether a day was missed IS the measurement.
+ *
+ * So: if there is no local history but the server has some, this device was wiped.
+ * Log it as an event, and adopt the server's sequence number so the covariate
+ * continues instead of restarting. The gap still cannot be recovered, but it stops
+ * being invisible - and "the data says storage was wiped on the 14th" is a different
+ * conversation from "there is nothing for the 14th".
+ */
+async function recoverFromEviction() {
+  const localSeq = await store.peekSessionSeq();
+  if (localSeq > 0) return;                       // ordinary device with its history
+
+  const remote = await upload.fetchLastSession();
+  if (!remote || !remote.session_seq) return;     // genuinely a first run, or offline
+
+  // A first run cannot have server history under this device id. Server history with
+  // no local history means the local copy was destroyed.
+  await store.setMeta('session_seq', remote.session_seq);
+  if (remote.device_id) await store.setMeta('device_id', remote.device_id);
+  await store.queueEvent('storage_evicted',
+    `local store empty but server has session_seq=${remote.session_seq}`
+    + ` (last seen ${remote.session_date_local || 'unknown'}).`
+    + ' Sequence adopted from the server; any unsent batch is lost.');
+  debugLog(`storage was evicted: resumed at session_seq ${remote.session_seq}`);
 }
 
 function debugLog(msg) {
