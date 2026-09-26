@@ -101,6 +101,17 @@ async function boot() {
   // is nothing to delay.
   recoverFromEviction().catch(() => {});
 
+  /*
+   * Retry the moment connectivity returns.
+   *
+   * Otherwise the drain happens only at boot, at session end and on hide. A session
+   * done during a brief outage would sit in the outbox until the NEXT session, which
+   * is the window an eviction has to land in to destroy it. Listening for `online`
+   * shrinks that window to about as small as it can be made without polling, and it
+   * costs one event listener.
+   */
+  window.addEventListener('online', () => { upload.drain().catch(() => {}); });
+
   // Neither of these may block START.
   upload.drain().then(res => {
     if (res.config) {
@@ -228,15 +239,37 @@ async function recoverFromEviction() {
   const remote = await upload.fetchLastSession();
   if (!remote || !remote.session_seq) return;     // genuinely a first run, or offline
 
-  // A first run cannot have server history under this device id. Server history with
-  // no local history means the local copy was destroyed.
+  /*
+   * THE EVENT STATES THE OBSERVATION, NOT A DIAGNOSIS - and the first draft got this
+   * wrong by calling it `storage_evicted`.
+   *
+   * Empty local history with server history present has TWO causes, and only one of
+   * them is a loss:
+   *
+   *   1. storage was evicted. An unsent batch, if there was one, is gone.
+   *   2. the app is running in a NEW CONTAINER - added to the Dock as a web app, or
+   *      opened in a different browser or profile. Nothing was lost; the old
+   *      container still holds whatever it held, including any unsent batch, which
+   *      is now stranded rather than destroyed.
+   *
+   * Cause 2 is the likelier one the first time, because adding the app to the Dock is
+   * a deliberate act somebody performs. Reporting it as an eviction would mean the
+   * record's first notable event is a data-loss claim about something that did not
+   * happen - and worse, it would train whoever reads it to discount the event that
+   * does matter later.
+   *
+   * The recovery is identical either way: adopt the server's sequence so the
+   * practice-effect covariate continues instead of restarting at 1.
+   */
   await store.setMeta('session_seq', remote.session_seq);
   if (remote.device_id) await store.setMeta('device_id', remote.device_id);
-  await store.queueEvent('storage_evicted',
-    `local store empty but server has session_seq=${remote.session_seq}`
+  await store.queueEvent('local_history_missing',
+    `no local history, server has session_seq=${remote.session_seq}`
     + ` (last seen ${remote.session_date_local || 'unknown'}).`
-    + ' Sequence adopted from the server; any unsent batch is lost.');
-  debugLog(`storage was evicted: resumed at session_seq ${remote.session_seq}`);
+    + ' Cause is either a storage eviction or a new container, e.g. added to the Dock.'
+    + ' Sequence adopted from the server. If this was an eviction, anything unsent at'
+    + ' the time is lost; if it was a new container, it is stranded in the old one.');
+  debugLog(`no local history: resumed at session_seq ${remote.session_seq}`);
 }
 
 function debugLog(msg) {

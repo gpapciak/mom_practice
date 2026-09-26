@@ -355,10 +355,22 @@ section('8. eviction is detectable from the server, so silence is not ambiguous'
   check('empty local + empty server = genuinely a first run', evicted(0, 0) === false);
   check('local history present = ordinary session, no recovery', evicted(3, 14) === false);
 
-  await store.queueEvent('storage_evicted', 'server has session_seq=14');
+  /*
+   * The event names the OBSERVATION, not a diagnosis. Empty local history with server
+   * history present has two causes: storage was evicted (a loss), or the app is in a
+   * new container - added to the Dock, or a different browser or profile - in which
+   * case nothing was lost and an unsent batch is stranded rather than destroyed.
+   *
+   * Calling it `storage_evicted` would make the record's first notable event a
+   * data-loss claim about a deliberate act, and would train a reader to discount the
+   * event that does matter later.
+   */
+  await store.queueEvent('local_history_missing', 'server has session_seq=14');
   const q = await store.takeQueuedEvents();
-  check('the eviction is queued as an event for the next batch',
-    q.some(e => e.type === 'storage_evicted'), JSON.stringify(q));
+  check('it is queued as an event for the next batch',
+    q.some(e => e.type === 'local_history_missing'), JSON.stringify(q));
+  check('and is NOT reported as an eviction, which is only one of its two causes',
+    !q.some(e => e.type === 'storage_evicted'), JSON.stringify(q));
   check('reading the queue clears it, so it is reported once',
     (await store.takeQueuedEvents()).length === 0);
 
