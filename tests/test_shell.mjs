@@ -1445,5 +1445,56 @@ section('31. the Dock app and a Safari tab are distinguishable in the data');
 }
 
 
+/* ========================= 32. time-to-start is measured from page load */
+
+section('32. ms_open_before_start measures hesitation, not prepare()');
+{
+  installBrowser();
+  const { Session } = await import('../app/session.js?v=32');
+
+  /*
+   * The schema defines this column as how long the opening screen was looked at, with
+   * an upward drift being a hesitation signal. It was measured from the Session
+   * constructor - which the Start handler creates - so it measured prepare() and read
+   * as a few tens of milliseconds every session.
+   *
+   * A hesitation signal that reads ~0 forever is worse than an absent one, because it
+   * looks populated and nobody goes looking. Caught while the Sheet was still empty,
+   * which is the only moment fixing it costs nothing.
+   */
+  const pageOpen = 1790000000000;
+  const s1 = new Session({ config: {}, openedAt: pageOpen });
+  check('openedAt is the value passed in, not construction time',
+    s1.openedAt === pageOpen, String(s1.openedAt));
+
+  s1.startedAt = pageOpen + 47000;        // 47 seconds on the opening screen
+  s1.stage = 'close';
+  const row = s1.sessionRow('completed');
+  check('ms_open_before_start is the real gap', row.ms_open_before_start === 47000,
+    String(row.ms_open_before_start));
+  check('opened_at_utc is page load', row.opened_at_utc === pageOpen);
+
+  // total_ms must stay TASK duration. Session length is what the reaction-time
+  // bracket interprets fatigue against, so idle time must not leak into it.
+  check('total_ms is measured from Start, NOT from page load',
+    row.total_ms < 47000, String(row.total_ms));
+  check('so the two sum to the whole visit, and neither double-counts',
+    row.ms_open_before_start + row.total_ms === row.ended_at_utc - row.opened_at_utc,
+    `${row.ms_open_before_start} + ${row.total_ms} vs ${row.ended_at_utc - row.opened_at_utc}`);
+
+  // Never started: the null the schema calls the most informative value in the table.
+  const s2 = new Session({ config: {}, openedAt: pageOpen });
+  const row2 = s2.sessionRow('never_started');
+  check('start_pressed_at_utc is null when Start was never pressed',
+    row2.start_pressed_at_utc === null);
+  check('and ms_open_before_start is null rather than a misleading zero',
+    row2.ms_open_before_start === null, String(row2.ms_open_before_start));
+
+  // Omitting it must not throw: a wrong-but-present time beats a crash on the device.
+  check('a missing openedAt falls back to now rather than failing',
+    new Session({ config: {} }).openedAt > 0);
+}
+
+
 console.log('\n' + (fail === 0 ? `ALL ${pass} CHECKS PASSED` : `${pass} passed, ${fail} FAILED`));
 process.exit(fail === 0 ? 0 : 1);

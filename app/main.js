@@ -45,6 +45,15 @@ const DRY = params.get('dry') === '1';
  */
 const SCREENS = params.get('screens') === '1';
 
+/**
+ * When this page loaded, captured before anything else runs.
+ *
+ * `ms_open_before_start` is the gap between this and the Start click. It was previously
+ * measured from the Session constructor, which the Start handler creates, so it
+ * measured prepare() and read as ~0 every time.
+ */
+const PAGE_OPENED = Date.now();
+
 const el = id => document.getElementById(id);
 
 let config = Object.assign({}, DEFAULTS);
@@ -163,7 +172,7 @@ function drawOpening() {
 }
 
 async function startSession() {
-  const session = new Session({ config, debug: DEBUG, dry: DRY });
+  const session = new Session({ config, debug: DEBUG, dry: DRY, openedAt: PAGE_OPENED });
   // Parsed fresh each session so an edit made this morning is picked up today.
   session.trainingItems = trainingParse(trainingItems);
   session.onReset = () => { drawOpening(); };

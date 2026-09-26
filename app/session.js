@@ -135,14 +135,28 @@ function choose(nodes, opts) {
 /* ---------------------------------------------------------------- Session */
 
 export class Session {
-  constructor({ config, debug, dry }) {
+  constructor({ config, debug, dry, openedAt }) {
     this.config = Object.assign({}, DEFAULTS, config || {});
     this.debug = !!debug;
     /** A dry run does everything except persist. For rehearsing on the real machine. */
     this.dry = !!dry;
 
     this.uid = store.uuid();
-    this.openedAt = Date.now();
+    /*
+     * PAGE LOAD, not the Start click.
+     *
+     * Passed in, because the Session is constructed by the Start handler - so
+     * `Date.now()` here was the moment Start was pressed, which made
+     * `ms_open_before_start` the duration of prepare(): a few tens of milliseconds,
+     * every session.
+     *
+     * The schema defines that column as how long the opening screen was looked at,
+     * with an upward drift being a hesitation signal. A hesitation signal reading ~0
+     * forever is worse than an absent one, because it looks populated and nobody goes
+     * looking. Time-to-start is one of the more interesting behavioural numbers this
+     * table can hold, so it is worth measuring from the right instant.
+     */
+    this.openedAt = openedAt || Date.now();
     this.startedAt = null;
     this.stage = 'open';
     this.trialBuffer = [];
@@ -350,7 +364,11 @@ export class Session {
       start_pressed_at_utc: this.startedAt,
       ended_at_utc: now,
       ms_open_before_start: this.startedAt ? this.startedAt - this.openedAt : null,
-      total_ms: now - this.openedAt,
+      // Task duration, from Start. Deliberately NOT from page load: session length is
+      // what the reaction-time bracket interprets fatigue against, and idle time on the
+      // opening screen is not part of the task. The pre-Start wait is carried by
+      // ms_open_before_start instead, so the two sum to the whole visit.
+      total_ms: now - (this.startedAt || this.openedAt),
       hidden_total_ms: this.watcher ? this.watcher.hiddenTotalMs() : 0,
       end_reason: endReason,
       last_stage_reached: this.stage,
