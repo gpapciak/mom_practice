@@ -95,10 +95,6 @@ async function boot() {
   // visit writes its own.
   await reconcileLastAlive();
 
-  // This visit, stamped at page level so that an open which never starts a session is
-  // still recorded. See recordOpen().
-  await recordOpen();
-
   // Cached config first, so the screen can be drawn immediately without waiting
   // on the network. A fresh device runs entirely on compiled-in defaults.
   const cached = await store.getMeta('config');
@@ -109,6 +105,25 @@ async function boot() {
   trainingItems = (await store.getMeta('training_items', [])) || [];
 
   drawOpening();
+
+  /*
+   * Recording this visit happens AFTER the screen is drawn, and cannot break it.
+   *
+   * It was originally awaited before `drawOpening()`, which was wrong twice over. It put
+   * an IndexedDB write in front of the first paint, so a storage failure would have left
+   * a blank screen instead of a greeting - and a blank screen is the worst possible
+   * outcome for someone who cannot ask anyone what happened.
+   *
+   * And it read `config.session_active` before the cached config had been applied, so it
+   * always saw the compiled-in default of true. On a day the remote off switch was set it
+   * would have logged `app_opened` rather than `app_opened_inactive`, quietly defeating
+   * the exclusion that stops those opens counting as failures to start.
+   *
+   * Nothing about recording an open needs to happen before the paint. The previous
+   * visit's stamp has already been read by reconcileLastAlive() above, which is the only
+   * ordering constraint that exists.
+   */
+  recordOpen().catch(() => {});
 
   // Not awaited: it makes one network call and must never delay START. It only ever
   // matters on a device whose storage has just been wiped, and on that device there
@@ -268,6 +283,16 @@ let visitUid = null;
 async function recordOpen() {
   // A rehearsal and a screen review are not opens. Neither is a dry run.
   if (DRY || SCREENS) return;
+  try {
+    await recordOpenInner();
+  } catch (e) {
+    // Losing the record of an open is a missing data point. Throwing here would have
+    // been a missing session, and there is no version of this worth that trade.
+    debugLog('could not record the open: ' + e);
+  }
+}
+
+async function recordOpenInner() {
   visitUid = store.uuid();
 
   // Stamped synchronously, and re-stamped on the way out, so the last moment the page
