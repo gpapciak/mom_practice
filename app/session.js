@@ -423,8 +423,31 @@ export class Session {
       await store.setMeta('stage_px_history', history.concat([this.stagePx]).slice(-30));
     }
 
-    // Written before anything else, so an open that goes nowhere is still on the
-    // record. never_started is the single most informative value in that table.
+    /*
+     * START WAS PRESSED. Record that here, before the snapshot below.
+     *
+     * prepare() only ever runs from the Start handler, so by the time this line
+     * executes the button has already been clicked. `startedAt` used to be assigned
+     * later, in run() - AFTER this snapshot - so the snapshot recorded
+     * start_pressed_at_utc as null.
+     *
+     * That was not merely untidy. If the page was then closed hard, the next boot's
+     * reconcile read this stale snapshot, saw a null start time, and concluded the
+     * session had NEVER STARTED - so a session that was begun and abandoned was
+     * indistinguishable in the record from one that was opened and never begun. The
+     * first two rows ever collected were mislabelled exactly that way, and
+     * `abandoned_closed` could essentially never occur.
+     *
+     * Those are opposite behaviours with opposite causes: one is an interruption, the
+     * other is a failure to initiate, and telling them apart is the whole point of
+     * watching initiation at all.
+     */
+    if (this.startedAt === null) this.startedAt = Date.now();
+
+    // Written before the session proper, so a session begun and then interrupted hard
+    // enough that no code of ours runs again is still on the record. The reconcile on
+    // the next boot turns this into abandoned_closed, because start_pressed_at_utc is
+    // now correctly set.
     if (!this.dry) await store.putSession(this.sessionRow('never_started'));
   }
 
@@ -435,7 +458,7 @@ export class Session {
     // a session number that the real series will then be missing.
     this.seq = this.dry ? (await store.peekSessionSeq()) + 1
                         : await store.nextSessionSeq();
-    this.startedAt = Date.now();
+    if (this.startedAt === null) this.startedAt = Date.now();
 
     // Built once per session, not per slot, so an item is never asked twice in a
     // session and a missed item's re-ask can land in a later slot. Sized by the

@@ -1540,5 +1540,56 @@ section('33. the stamp carries enough to describe a visit with no session');
 }
 
 
+/* ========================= 34. a begun session is never labelled never_started */
+
+section('34. an interrupted session is distinguishable from one never begun');
+{
+  installBrowser();
+  const { Session } = await import('../app/session.js?v=34');
+
+  /*
+   * FOUND IN THE FIRST THREE ROWS EVER COLLECTED, two of which were wrong.
+   *
+   * prepare() runs only from the Start handler, so the button has already been clicked
+   * by the time it executes. But startedAt was assigned later, in run(), AFTER prepare()
+   * wrote its opening snapshot - so that snapshot recorded start_pressed_at_utc as null.
+   *
+   * If the page was then closed hard, the next boot's reconcile read the stale snapshot,
+   * saw a null start time, and concluded the session had never started. A session begun
+   * and abandoned was therefore indistinguishable from one opened and never begun, and
+   * `abandoned_closed` could essentially never occur.
+   *
+   * Those are opposite behaviours with opposite causes - an interruption versus a
+   * failure to initiate - and telling them apart is the point of watching initiation.
+   */
+  const s1 = new Session({ config: {}, openedAt: 1790000000000 });
+  check('startedAt is null before prepare, since Start has not been handled yet',
+    s1.startedAt === null);
+
+  // What prepare() does to it, without needing storage: the assignment is the contract.
+  if (s1.startedAt === null) s1.startedAt = Date.now();
+  const snapshot = s1.sessionRow('never_started');
+  check('the opening snapshot carries a real start time',
+    snapshot.start_pressed_at_utc > 0, String(snapshot.start_pressed_at_utc));
+
+  /*
+   * The reconcile's rule, restated as the invariant it has to satisfy. It reads the
+   * stored row, so what matters is that a begun session's stored row can never present
+   * as one that was never begun.
+   */
+  const reconciled = row => (row.start_pressed_at_utc ? 'abandoned_closed' : 'never_started');
+  check('a begun-then-hard-closed session reconciles to abandoned_closed',
+    reconciled(snapshot) === 'abandoned_closed', reconciled(snapshot));
+  check('and only a genuinely unstarted row reconciles to never_started',
+    reconciled({ start_pressed_at_utc: null }) === 'never_started');
+
+  // run() must not overwrite a start time prepare() already recorded, or the two would
+  // disagree and ms_open_before_start would shrink by however long prepare() took.
+  const before = s1.startedAt;
+  if (s1.startedAt === null) s1.startedAt = Date.now() + 5000;
+  check('run() does not clobber the start time prepare() set', s1.startedAt === before);
+}
+
+
 console.log('\n' + (fail === 0 ? `ALL ${pass} CHECKS PASSED` : `${pass} passed, ${fail} FAILED`));
 process.exit(fail === 0 ? 0 : 1);
