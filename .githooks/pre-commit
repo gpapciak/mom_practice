@@ -24,3 +24,16 @@ if ! node tests/check_no_personal.mjs; then
   echo "Rewrite them generically, or move the file to the private repository." >&2
   exit 1
 fi
+
+# The test suites run here too, for the same reason: a suite that is only run when
+# someone remembers is a suite that passes on the commits nobody checked.
+for suite in tests/test_shell.mjs tests/test_pool.mjs; do
+  if ! node "$suite" >/tmp/suite.$$ 2>&1; then
+    tail -30 /tmp/suite.$$ >&2
+    rm -f /tmp/suite.$$
+    echo "" >&2
+    echo "pre-commit: BLOCKED. $suite is failing." >&2
+    exit 1
+  fi
+  rm -f /tmp/suite.$$
+done

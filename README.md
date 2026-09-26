@@ -55,6 +55,30 @@ Each file checks its own token prefix at startup and refuses to run if the wrong
 is pasted in, because a swap would break nothing visibly while widening what the more
 public page can do.
 
+## Checks
+
+```
+node tests/check_no_personal.mjs   # nothing here may describe the individual who uses it
+node tests/test_shell.mjs          # session shell: interruptions, geometry, screens, columns
+node tests/test_pool.mjs           # item pool: manifest, selector, queue, forward simulation
+```
+
+All three run automatically on commit via `.githooks/pre-commit`, enabled with:
+
+```
+git config core.hooksPath .githooks
+```
+
+They run in the hook rather than by convention because running them by hand failed
+twice, the same way both times: the command was chained after another, its non-zero
+exit was swallowed, and the commit went ahead. Writing down "run it separately and
+read the output" did not prevent the second occurrence.
+
+`test_pool.mjs` section 9 is not a unit test. It runs the real selector forward one
+simulated session per day until it cannot fill a cell, and prints how many sessions
+each pool shape actually supplies. That number is not images / 48 — concept capacity
+binds long before image capacity does.
+
 ## Licence
 
 Application code: MIT.
