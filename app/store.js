@@ -136,6 +136,34 @@ export async function takeQueuedEvents() {
   } catch (e) { return []; }
 }
 
+/**
+ * A monotonic counter in meta. Returns the new value.
+ *
+ * Why counters as well as one event per occurrence: the queued-event list is capped, and
+ * it only drains when a session completes. A stretch of opens with no completed session
+ * would therefore lose its OLDEST events - undercounting the denominator and making the
+ * opens-to-starts ratio look healthier than it is, which is the wrong direction for a
+ * warning signal.
+ *
+ * Cumulative counters cannot be biased that way. Differencing them between any two
+ * events gives the exact count for that interval no matter what was dropped in between,
+ * so the per-event rows give the detail and the counters give the truth.
+ */
+export async function bumpCounter(key, by = 1) {
+  try {
+    const n = (Number(await getMeta(key, 0)) || 0) + by;
+    // The write is VERIFIED, because neither getMeta nor setMeta throws: getMeta returns
+    // its fallback and setMeta returns null. Without this check a device with blocked
+    // storage would return 1 from every call - a counter that silently restarts, which
+    // is the same "looks populated, means nothing" failure as a covariate reading zero
+    // forever. Null is a worse-looking answer and a far better one.
+    const ok = await setMeta(key, n);
+    return ok === null ? null : n;
+  } catch (e) {
+    return null;
+  }
+}
+
 /* ---------- trials ---------- */
 
 export function putTrials(rows) {

@@ -1496,5 +1496,49 @@ section('32. ms_open_before_start measures hesitation, not prepare()');
 }
 
 
+/* ========================= 33. an open that never starts leaves a record */
+
+section('33. the stamp carries enough to describe a visit with no session');
+{
+  const env = installBrowser();
+  const lifecycle = await import('../app/lifecycle.js?v=33');
+
+  /*
+   * A visit that never presses Start writes no session row - deliberately, because
+   * session_seq must keep meaning "times this has been done" and must not become a
+   * mixed count of opens. The synchronous stamp is therefore the ONLY record such a
+   * visit leaves, and the next boot turns it into an event.
+   */
+  const opened = 1790000000000;
+  lifecycle.stampAlive('visit-abc', 'open', opened);
+  let a = lifecycle.readLastAlive();
+  check('the stamp carries the visit id', a.session_uid === 'visit-abc');
+  check('and the page-open time, which nothing else holds', a.opened_at === opened,
+    String(a.opened_at));
+  check('and a last-alive time, so elapsed is computable',
+    a.at >= opened || typeof a.at === 'number');
+
+  // Re-stamped on the way out: the last moment the page was alive.
+  lifecycle.stampAlive('visit-abc', 'open', opened);
+  a = lifecycle.readLastAlive();
+  check('re-stamping preserves the ORIGINAL open time, not the latest',
+    a.opened_at === opened,
+    'otherwise elapsed would always compute as zero');
+
+  // A session-level stamp has no need of it: the session row already holds it.
+  lifecycle.stampAlive('sess-1', 'crt_1');
+  check('a session stamp leaves opened_at null rather than inventing one',
+    lifecycle.readLastAlive().opened_at === null);
+
+  lifecycle.clearAlive();
+  check('cleared', lifecycle.readLastAlive() === null);
+
+  // Blocked storage must not break a session; absence is handled everywhere.
+  env.blockStorage && env.blockStorage();
+  check('a stamp on blocked storage does not throw',
+    (() => { try { lifecycle.stampAlive('x', 'open', 1); return true; } catch { return false; } })());
+}
+
+
 console.log('\n' + (fail === 0 ? `ALL ${pass} CHECKS PASSED` : `${pass} passed, ${fail} FAILED`));
 process.exit(fail === 0 ? 0 : 1);

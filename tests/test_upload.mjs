@@ -410,6 +410,61 @@ section('10. a broken database degrades the session, it does not stop it');
     (await upload.drain()).sent === 0);
 }
 
+/* ========================= 11. opens and starts, counted two ways */
+
+section('11. opens vs starts: events for detail, counters for truth');
+{
+  await reset();
+
+  check('a counter starts at 1', (await store.bumpCounter('opens_total')) === 1);
+  check('and is monotonic', (await store.bumpCounter('opens_total')) === 2);
+  check('counters are independent', (await store.bumpCounter('starts_total')) === 1);
+  check('and readable without bumping',
+    Number(await store.getMeta('opens_total', 0)) === 2);
+
+  /*
+   * THE CLAIM THIS SECTION EXISTS TO PROVE.
+   *
+   * The queued-event list is capped and only drains when a session completes, so a run
+   * of opens with no completed session loses its OLDEST events. That undercounts the
+   * DENOMINATOR, making the opens-to-starts ratio look healthier than it is - the wrong
+   * direction for a warning signal, because the failure mode hides itself.
+   *
+   * Cumulative counters cannot be biased that way. Differencing them across any two
+   * events gives the exact count for the interval regardless of what was dropped.
+   */
+  await reset();
+  for (let i = 0; i < 70; i++) {
+    await store.bumpCounter('opens_total');
+    await store.queueEvent('app_opened', 'visit=' + i);
+  }
+  const events = await store.takeQueuedEvents();
+  check('events were dropped by the cap, as designed', events.length === 50,
+    String(events.length));
+  check('SO THE EVENT COUNT UNDERSTATES THE OPENS', events.length < 70);
+  check('but the counter is exact', Number(await store.getMeta('opens_total', 0)) === 70,
+    String(await store.getMeta('opens_total', 0)));
+
+  // Differencing gives the interval count even across a gap in the events.
+  const first = Number(events[0].detail.split('=')[1]);
+  const last = Number(events[events.length - 1].detail.split('=')[1]);
+  check('and the surviving events are the most recent, so recency is preserved',
+    last === 69 && first === 20, `${first}..${last}`);
+
+  /*
+   * Neither getMeta nor setMeta throws - one returns its fallback, the other null - so
+   * without an explicit check bumpCounter returned 1 from every call on a device with
+   * blocked storage. A counter that silently restarts is the same failure as a covariate
+   * that reads zero forever: it looks populated, so nobody goes looking.
+   */
+  idb.breakIt();
+  check('a broken database returns null rather than a wrong count',
+    (await store.bumpCounter('opens_total')) === null);
+  check('and specifically NOT 1, which is what an unverified write returns',
+    (await store.bumpCounter('starts_total')) !== 1);
+  idb.breakIt(false);
+}
+
 /* ------------------------------------------------------------------- summary */
 
 console.log();

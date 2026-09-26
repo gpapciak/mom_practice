@@ -87,10 +87,19 @@ export function readLastAlive() {
   }
 }
 
-export function stampAlive(sessionUid, stage) {
+/**
+ * `openedAt` is optional and only the page-level caller supplies it.
+ *
+ * It exists so that a visit which never started a session can still report how long the
+ * opening screen was looked at: with no session there is no session row to carry that,
+ * and the difference between opening and closing is the whole content of the event.
+ * Session-level stamps leave it null, because the session row already holds it.
+ */
+export function stampAlive(sessionUid, stage, openedAt) {
   try {
     localStorage.setItem(ALIVE_KEY, JSON.stringify({
-      at: Date.now(), session_uid: sessionUid || null, stage: stage || null
+      at: Date.now(), session_uid: sessionUid || null, stage: stage || null,
+      opened_at: openedAt || null
     }));
   } catch (e) { /* never let a storage failure end a session */ }
 }

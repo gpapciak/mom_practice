@@ -91,8 +91,13 @@ async function boot() {
 
   // A session interrupted hard enough that its own code never ran again leaves a
   // synchronous localStorage stamp. Reconcile it so the row is not left claiming
-  // it never started.
+  // it never started. Reads the PREVIOUS visit's stamp, so it must run before this
+  // visit writes its own.
   await reconcileLastAlive();
+
+  // This visit, stamped at page level so that an open which never starts a session is
+  // still recorded. See recordOpen().
+  await recordOpen();
 
   // Cached config first, so the screen can be drawn immediately without waiting
   // on the network. A fresh device runs entirely on compiled-in defaults.
@@ -172,6 +177,7 @@ function drawOpening() {
 }
 
 async function startSession() {
+  await recordStart();
   const session = new Session({ config, debug: DEBUG, dry: DRY, openedAt: PAGE_OPENED });
   // Parsed fresh each session so an edit made this morning is picked up today.
   session.trainingItems = trainingParse(trainingItems);
@@ -198,7 +204,19 @@ async function reconcileLastAlive() {
   if (!alive || !alive.session_uid) return;
   const row = await store.getSession(alive.session_uid);
   lifecycle.clearAlive();
-  if (!row) return;
+
+  // No session row for that stamp means Start was never pressed: the previous visit was
+  // an open and nothing else. This is the branch the initiation signal lives on, and it
+  // used to be a bare `return`.
+  if (!row) {
+    if (alive.opened_at && alive.at > alive.opened_at) {
+      await store.queueEvent('app_open_no_start',
+        `visit=${String(alive.session_uid).slice(0, 8)}`
+        + `; elapsed_ms=${alive.at - alive.opened_at}`);
+      debugLog(`previous visit opened and never started (${alive.at - alive.opened_at} ms)`);
+    }
+    return;
+  }
   if (row.end_reason && row.end_reason !== 'never_started' && row.ended_at_utc) return;
 
   row.ended_at_utc = alive.at;
@@ -212,6 +230,68 @@ async function reconcileLastAlive() {
   await store.putSession(row);
   await upload.enqueue(trials, [row]);
   debugLog(`recovered interrupted session ${row.session_uid.slice(0, 8)}: ${row.end_reason}`);
+}
+
+/**
+ * OPENS AND STARTS ARE COUNTED AS EVENTS, NOT AS SESSION ROWS.
+ *
+ * The schema says an open that goes nowhere should still be recorded, and calls the null
+ * `start_pressed_at_utc` the most informative value in the session table. It was
+ * unreachable: the session row is written in prepare(), which only runs after Start is
+ * pressed, so an open with no start wrote nothing at all.
+ *
+ * The fix deliberately does NOT write a session row for it. `session_seq` has to keep
+ * meaning "times this has been done" - it is the practice-effect covariate and it
+ * appears in every across-time model. Counting opens into it would make it a mixed
+ * quantity, and a covariate that silently means two things is worse than a missing
+ * signal.
+ *
+ * So three event types, each timestamped when it happens, so that weekly buckets work
+ * on `logged_at_ms` with no string parsing:
+ *
+ *   app_opened           every page load. The DENOMINATOR.
+ *   app_started          Start pressed. The NUMERATOR.
+ *   app_open_no_start    emitted by the NEXT boot for a visit that never started,
+ *                        carrying how long the opening screen was looked at.
+ *
+ * The ratio over any period is then two COUNTIFS over one tab. A rising share of opens
+ * without starts is the drift worth watching: it separates not opening the app at all
+ * from opening it and not being able to begin, and those have different causes and
+ * different remedies.
+ *
+ * `app_opened_inactive` is kept separate and excluded from the ratio, because on a day
+ * the remote off switch is set there is no start to be had, and counting those opens as
+ * failures to start would manufacture a decline that never happened.
+ */
+let visitUid = null;
+
+async function recordOpen() {
+  // A rehearsal and a screen review are not opens. Neither is a dry run.
+  if (DRY || SCREENS) return;
+  visitUid = store.uuid();
+
+  // Stamped synchronously, and re-stamped on the way out, so the last moment the page
+  // was alive is known even if it is closed without warning. This is the only record a
+  // visit with no session leaves.
+  lifecycle.stampAlive(visitUid, 'open', PAGE_OPENED);
+  window.addEventListener('pagehide', () => {
+    lifecycle.stampAlive(visitUid, 'open', PAGE_OPENED);
+  });
+
+  const opens = await store.bumpCounter('opens_total');
+  const starts = Number(await store.getMeta('starts_total', 0)) || 0;
+  await store.queueEvent(
+    config.session_active ? 'app_opened' : 'app_opened_inactive',
+    `visit=${String(visitUid).slice(0, 8)}; opens_total=${opens}; starts_total=${starts}`);
+}
+
+async function recordStart() {
+  if (DRY || SCREENS) return;
+  const starts = await store.bumpCounter('starts_total');
+  const opens = Number(await store.getMeta('opens_total', 0)) || 0;
+  await store.queueEvent('app_started',
+    `visit=${String(visitUid).slice(0, 8)}; starts_total=${starts}; opens_total=${opens}`
+    + `; ms_open_before_start=${Date.now() - PAGE_OPENED}`);
 }
 
 /**
