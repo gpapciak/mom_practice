@@ -223,8 +223,10 @@ async function runOne(session, { screenEl, stage, entry, index, deadline }) {
   screenEl.innerHTML = promptHtml(item);
 
   session.beginTrial();
-  // Onset from the frame that paints the prompt, the same time base as the click.
-  const promptOnset = await new Promise(r => requestAnimationFrame(t => r(t)));
+  // Awaited, not stored: it forces the prompt to be PAINTED before the reveal gate
+  // starts counting, so the gate is five seconds of the question being visible rather
+  // than five seconds that began before anything appeared.
+  await new Promise(r => requestAnimationFrame(t => r(t)));
 
   // The button appears after the gate, so there is nothing to click through. The
   // latency clock starts when it becomes available, not when the prompt appeared.
@@ -243,6 +245,24 @@ async function runOne(session, { screenEl, stage, entry, index, deadline }) {
 
   /* ---- 2. the answer, then the self-report ---- */
   screenEl.innerHTML = answerHtml(item);
+
+  /*
+   * Onset of the SELF-REPORT screen, stamped in the frame that paints it.
+   *
+   * This is what `response_latency_ms` is measured from. It used to be measured from a
+   * variable called `onset` which was never defined anywhere - a ReferenceError sitting
+   * inside `picked.at != null ? ... : null`, so it threw only when somebody actually
+   * CLICKED, and was skipped entirely when the item timed out.
+   *
+   * That is why it survived: the timeout path was the only one ever exercised. It meant
+   * training threw on the first answered item of every session.
+   *
+   * Measuring from here rather than from the prompt is also the correct choice: the
+   * prompt-to-reveal interval is already `training_reveal_latency_ms`, and folding the
+   * five-second gate plus reading time into the self-report latency would make it
+   * uninterpretable.
+   */
+  const answerOnset = await new Promise(r => requestAnimationFrame(t => r(t)));
 
   const picked = await awaitClick(
     [...screenEl.querySelectorAll('.choices button')],
@@ -290,7 +310,8 @@ async function runOne(session, { screenEl, stage, entry, index, deadline }) {
     correct: null,                     // self-report is not an objective match
     outcome_flag: recall === RECALL.OMITTED ? 'omission' : 'ok',
     speech_outcome: speechOutcome,
-    response_latency_ms: picked.at != null ? Math.round(picked.at - onset) : null,
+    response_latency_ms: (picked.at != null && answerOnset != null)
+      ? Math.max(0, Math.round(picked.at - answerOnset)) : null,
     training_recall: recall,
     training_reveal_latency_ms: revealMs,
     training_reveal_gate_ms: REVEAL_GATE_MS,

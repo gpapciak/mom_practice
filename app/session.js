@@ -509,6 +509,24 @@ export class Session {
       await this.end('completed');
     } catch (e) {
       this.log('error: ' + (e && e.message));
+      /*
+       * THE MESSAGE HAS TO LEAVE THE DEVICE.
+       *
+       * `end_reason: error` used to be the whole of what was recorded: the message went
+       * to the debug pane, which is unreachable in a Dock web app - no address bar, so no
+       * ?debug=1 - and which nobody is watching from another country anyway. A session
+       * that fails with no reason attached is a bug report with the bug removed.
+       *
+       * Queued before end() so it travels in the same batch as the failed session's row,
+       * and the first stack frame is included because the message alone rarely says which
+       * of a stage's several awaits it came from.
+       */
+      // A prefix of the stack rather than one parsed line: no escapes to get wrong,
+      // and more context for the same handful of characters.
+      const frame = String((e && e.stack) || '').slice(0, 240);
+      await store.queueEvent('session_error',
+        `stage=${this.stage}; ${(e && e.name) || 'Error'}: ${(e && e.message) || e}`
+        + `; at ${frame.trim().slice(0, 160)}`);
       await this.end('error');
       throw e;
     }

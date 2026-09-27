@@ -1652,5 +1652,111 @@ section('35. a slow slot cannot push crt_2 later');
 }
 
 
+/* ========================= 36. a training item, answered, end to end */
+
+section('36. the ANSWERED path - the one that had never been run');
+{
+  /*
+   * WHY THIS SECTION EXISTS.
+   *
+   * `response_latency_ms` was computed from a variable called `onset` that was never
+   * defined anywhere. A ReferenceError, sitting inside `picked.at != null ? ... : null`
+   * - so it threw only when somebody actually CLICKED, and was skipped entirely when
+   * the item timed out.
+   *
+   * Every test touched the pure helpers: the schedule, the caps, the copy, the parsing.
+   * None had ever run an item through to a response. So the only path a real session
+   * takes was the only path never exercised, and training threw on the first answered
+   * item of every session. Three sessions on the real machine ended `error` at
+   * `training_1` with zero trials before it was found.
+   *
+   * The lesson is narrower than "write more tests": a stub that never delivers the
+   * input the code exists to handle is not exercising that code. The timeout path
+   * passing made it look covered.
+   */
+  installBrowser();
+  /*
+   * Real, immediate timers for this section only. installBrowser() provides a fake clock
+   * that tests advance by hand, which is right for the interruption work - but this
+   * section runs the module's own control flow end to end, and that flow sleeps through
+   * the reveal gate. Driving a fake clock through it would test the driving, not the flow.
+   */
+  const realTimeout = (await import('node:timers')).setTimeout;
+  global.setTimeout = (fn, ms, ...a) => realTimeout(fn, 0, ...a);
+  global.requestAnimationFrame = cb => realTimeout(() => cb(Date.now()), 0);
+
+  const tr = await import('../app/probe_training.js?v=36');
+
+  // A DOM stub that CLICKS. Buttons answer themselves on the next tick, which is the
+  // input the whole module exists to process.
+  const node = (id, value) => ({
+    id, hidden: true, dataset: value ? { value } : {}, textContent: '', _html: '',
+    classList: { add() {}, remove() {} },
+    _h: {},
+    addEventListener(t, f) {
+      (this._h[t] = this._h[t] || []).push(f);
+      if (t === 'click') setTimeout(() => this.click(), 0);
+    },
+    removeEventListener(t, f) { this._h[t] = (this._h[t] || []).filter(x => x !== f); },
+    click() {
+      const ev = { timeStamp: Date.now(), currentTarget: this, target: this };
+      (this._h.click || []).slice().forEach(f => f(ev));
+    },
+    get innerHTML() { return this._html; },
+    set innerHTML(v) { this._html = v; },
+    querySelectorAll() {
+      return (this._btns = this._btns
+        || ['got_it', 'partly', 'missed'].map(v => node('b_' + v, v)));
+    },
+  });
+
+  const reveal = node('trReveal');
+  document.getElementById = id => (id === 'trReveal' ? reveal : node(id));
+  const screenEl = node('screen');
+
+  const item = {
+    item_id: 't:example', prompt: 'A question?', answer: 'An answer',
+    interval_days: 1, streak: 0, exposures: 0, max_interval_days: '', active: true
+  };
+  const rows = [];
+  const session = {
+    config: { audio_enabled: false },
+    trainingQueue: [{ item, isRetest: false }],
+    trainingProgress: new Map(),
+    ended: false, stagePx: 910,
+    beginTrial() {}, addTrial(r) { rows.push(r); },
+    veil() {}, flush: async () => {}, log() {},
+    checkFits: () => ({ fits: true, extentU: 0.5 }),
+    todayLocal: '2026-09-26'
+  };
+
+  let threw = null;
+  let n = 0;
+  try {
+    n = await tr.runSlot(session, { screenEl, stage: 'training_1', slotMs: 100000 });
+  } catch (e) { threw = e; }
+
+  check('an ANSWERED item does not throw', threw === null,
+    threw && `${threw.name}: ${threw.message}`);
+  check('it produced a trial row', n >= 1 && rows.length >= 1, `${n} / ${rows.length}`);
+
+  const row = rows[0] || {};
+  check('response_latency_ms is a number, not undefined',
+    typeof row.response_latency_ms === 'number', String(row.response_latency_ms));
+  check('and is never negative, whatever the clocks did',
+    row.response_latency_ms >= 0, String(row.response_latency_ms));
+  check('the self-report is recorded', !!row.training_recall, String(row.training_recall));
+  check('correct is null - self-report is not an objective match',
+    row.correct === null, String(row.correct));
+  check('the reveal gate is recorded alongside the latency it constrains',
+    row.training_reveal_gate_ms === tr.REVEAL_GATE_MS);
+  check('the item id travels on the row', row.item_id === 't:example');
+
+  // The schedule must actually advance, or this stops being spaced retrieval.
+  check('an answered item advanced its schedule',
+    session.trainingProgress.has('t:example'));
+}
+
+
 console.log('\n' + (fail === 0 ? `ALL ${pass} CHECKS PASSED` : `${pass} passed, ${fail} FAILED`));
 process.exit(fail === 0 ? 0 : 1);
