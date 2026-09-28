@@ -49,7 +49,7 @@ export const REVEAL_GATE_MS = 5000;
  * the lifecycle watcher notices a freeze - and if the page stays visible there is no
  * freeze to notice, so it would hang indefinitely with nobody in the room.
  */
-export const NO_RESPONSE_MS = 120000;
+export const NO_RESPONSE_MS = 45000;
 
 /**
  * However tight the slot gets, never give less than this to answer.
@@ -60,6 +60,15 @@ export const NO_RESPONSE_MS = 120000;
  * Below this the honest thing is not to start the item at all.
  */
 export const MIN_RESPONSE_MS = 20000;
+
+/*
+ * NO_RESPONSE_MS was 120000, which was sized against nothing in particular and was two
+ * full minutes of one item in a session now expected to run four to six. The slot
+ * deadline already trims the wait to whatever the slot has left, so in practice the
+ * effective window is MIN_RESPONSE_MS to NO_RESPONSE_MS - but the nominal value should
+ * still be a number somebody could defend. 45s is ample for a three-button self-report
+ * and short enough that one unanswered item is not a third of the session.
+ */
 
 const ANSWER_DWELL_MS = 2000;
 const MISS_DWELL_MS = 3400;

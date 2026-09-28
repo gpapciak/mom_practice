@@ -52,8 +52,27 @@ import * as lifecycle from './lifecycle.js';
 export const PROBE_ID = 'A_crt';
 export const PROBE_VERSION = 1;
 
-export const TRIALS_PER_BLOCK = 24;
-export const SIDES_PER_BLOCK = 12;          // 12 left, 12 right, always
+/**
+ * 16, down from 24, decided before the first collected row.
+ *
+ * The relative standard error of an intraindividual-variability estimate is about
+ * 1/sqrt(2(n-1)): 14.7% at 24 trials, 18.3% at 16. A factor of 1.24 per session,
+ * recoverable with about 1.5x the sessions - roughly ten extra days across six months of
+ * daily use.
+ *
+ * Set against that: 56 clicks a session was more than the person using it would tolerate,
+ * and a probe that gets refused measures nothing at all. The precision is recoverable by
+ * waiting; the willingness is not.
+ */
+export const TRIALS_PER_BLOCK = 16;
+
+/**
+ * DERIVED, never stated. Exact left/right balance is structural, so this is
+ * TRIALS_PER_BLOCK / 2 by definition - and when the trial count changed from 24 to 16, a
+ * separately written 12 would have silently built 24-trial blocks from a 16-trial
+ * constant.
+ */
+export const SIDES_PER_BLOCK = TRIALS_PER_BLOCK / 2;
 export const SETTLE_MS = 300;               // after the home click, before the foreperiod
 export const RESPONSE_TIMEOUT_MS = 5000;    // then omission
 export const ANTICIPATION_MS = 150;         // faster than this is not a decision
@@ -72,7 +91,11 @@ export const FEEDBACK_MS = 400;             // target dims, then the home pad re
  * crt_1 a mixture of fatigue and warm-up rather than fatigue alone - and that
  * difference is the entire fatigue measure.
  */
-export const PRACTICE_TRIALS = 4;
+/**
+ * 3, down from 4. Both blocks still get them: warming only the first would make
+ * crt_2 - crt_1 a mixture of fatigue and warm-up rather than fatigue alone.
+ */
+export const PRACTICE_TRIALS = 3;
 
 /**
  * Kept on screen for the whole block, and this is not decoration.
@@ -98,19 +121,25 @@ export const FOREPERIODS = [
  *
  * Sides are exactly 12/12 — balance is structural, not left to chance.
  *
- * Foreperiods: 24 trials from a 16-value list, so exact balance is impossible. The
- * rule is fixed rather than clever: one full shuffled pass guarantees every value
- * appears at least once, then eight more from a second pass, then the 24 are
- * shuffled together. Every value appears once or twice, never zero times.
+ * Foreperiods are drawn in whole shuffled passes over the 16-value list, so every value
+ * appears as near equally often as the trial count allows and none is ever missing. At 16
+ * trials that is exactly one pass and the balance is perfect.
+ *
+ * This used to take one pass and then `.slice(0, 8)` of a second - a hardcoded 8 that was
+ * really `24 - 16`. Changing TRIALS_PER_BLOCK to 16 would have left it building 24
+ * foreperiods for 16 trials: no error, just eight values silently discarded and the
+ * balance quietly wrong. Derived from the trial count instead.
  */
 export function makeBlock(seed) {
   const next = rng(seed);
   const sides = shuffle(
     Array(SIDES_PER_BLOCK).fill('left').concat(Array(SIDES_PER_BLOCK).fill('right')),
     next);
-  const fps = shuffle(
-    shuffle(FOREPERIODS, next).concat(shuffle(FOREPERIODS, next).slice(0, 8)),
-    next);
+
+  let pool = [];
+  while (pool.length < TRIALS_PER_BLOCK) pool = pool.concat(shuffle(FOREPERIODS, next));
+  const fps = shuffle(pool.slice(0, TRIALS_PER_BLOCK), next);
+
   return sides.map((side, i) => ({ side, foreperiod_ms: fps[i] }));
 }
 

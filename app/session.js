@@ -21,7 +21,7 @@
  * - Adult in tone throughout.
  */
 
-import { APP_VERSION, DEFAULTS, TIMING } from './config.js';
+import { APP_VERSION, DEFAULTS } from './config.js';
 import * as store from './store.js';
 import * as layout from './layout.js';
 import * as speech from './speech.js';
@@ -44,23 +44,57 @@ import * as screens from './screens.js';
  *
  * What changes between phases is only WHICH stage occupies a slot:
  *
- *   phase 1 (now)   training fills the Probe B and C slots; the fillers stay fillers
- *   phase 2 (later) the probes take their slots back and training moves to the
- *                   fillers, as originally designed
+ *   phase 1 (now)   training occupies the Probe B and C slots. The two dedicated filler
+ *                   slots have NO phase-1 occupant and are skipped, and training slots
+ *                   are NOT padded out - so the session is as long as the content
+ *                   needs, about four to six minutes.
+ *   phase 2 (later) the probes take their slots back, training moves to the fillers as
+ *                   originally designed, and the slots are padded to fixed durations
+ *                   again because the retention delays have to be real.
  *
- * Because the slots keep their durations, the two blocks stay at identical elapsed
- * times across that change. The discontinuity is reduced to a change in the KIND of
- * work between them, not its duration or position — which is what makes phasing
- * cheap rather than ruinous. It is still a step, and it still needs a phase term in
- * any model that spans it.
+ * WHY PHASE 1 IS NOT PADDED, WHICH IS NOT A CONCESSION
+ * ---------------------------------------------------
+ * The original design held every slot to a fixed duration so that crt_1 and crt_2 sat at
+ * identical elapsed times in every session. That is the right instinct and it is what
+ * makes the phase change cheap.
+ *
+ * But it was never supportable at this size. The non-CRT slots total 475s, which is
+ * capacity for about 19 training items. Spaced retrieval cannot supply that: items settle
+ * onto intervals of two to three weeks, so each one comes due roughly every 17 days, and
+ * having 19 due on the same day needs a pool of something like 130 to 320 items. With a
+ * realistic pool of a few dozen, two to four items come due on a typical day.
+ *
+ * So at 10.5 minutes the session was ALWAYS going to be mostly padding, whatever content
+ * anybody wrote - and padding in phase 1 is an empty screen, because there is no retention
+ * interval for it to protect. Watching a real session made that plain: roughly six of ten
+ * minutes with nothing happening, twice interrupted by a screen that said as much.
+ *
+ * Shortening it is therefore a correction to a size that could not work, not a compromise
+ * on the measurement. Read the other way round, the 10.5-minute session was the
+ * compromise: it traded the willingness the whole design depends on for a fixed elapsed
+ * position it could not fill.
+ *
+ * THE COST, STATED
+ * ----------------
+ * crt_2 now sits at a variable elapsed time, because the training slots are as long as
+ * the content. So `crt_2 - crt_1` is no longer a fixed-interval fatigue measure: it must
+ * be normalised by the actual elapsed gap between the blocks, which every row already
+ * carries in `ms_since_session_start`. That is an analysis choice, not a code change -
+ * see 10-analysis-plan.md.
+ *
+ * The phase-1 fatigue baseline therefore does not transfer to phase 2, where padding
+ * returns and the gap is fixed. Compared within phase, not across it. Accepted
+ * deliberately: a shape that gets abandoned in week three measures nothing at all.
  */
 export const SKELETON = [
   { slot: 'opening', ms: 100000, phase1: 'training_1', phase2: 'opening_recognition' },
   { slot: 'crt_1',   ms: null,   phase1: 'crt_1',      phase2: 'crt_1' },
   { slot: 'encode',  ms: 110000, phase1: 'training_2', phase2: 'encoding' },
-  { slot: 'fill_1',  ms: 75000,  phase1: 'filler_1',   phase2: 'training_1' },
+  // No phase-1 occupant: in phase 1 there is no retention interval to protect, so this
+  // slot would be an empty screen held open for nothing. Skipped entirely.
+  { slot: 'fill_1',  ms: 75000,  phase1: null,         phase2: 'training_1' },
   { slot: 'recog_s', ms: 50000,  phase1: 'training_3', phase2: 'recognition_short' },
-  { slot: 'fill_2',  ms: 90000,  phase1: 'filler_2',   phase2: 'training_2' },
+  { slot: 'fill_2',  ms: 90000,  phase1: null,         phase2: 'training_2' },
   { slot: 'recog_m', ms: 50000,  phase1: 'training_4', phase2: 'recognition_medium' },
   { slot: 'crt_2',   ms: null,   phase1: 'crt_2',      phase2: 'crt_2' }
 ];
@@ -82,7 +116,7 @@ export const STAGES = [
 /** Total training time available in a phase, used to size the due-item queue. */
 export function trainingBudgetMs(phase) {
   return SKELETON
-    .filter(sl => sl[phase].startsWith('training'))
+    .filter(sl => String(sl[phase] || '').startsWith('training'))
     .reduce((n, sl) => n + (sl.ms || 0), 0);
 }
 
@@ -498,6 +532,8 @@ export class Session {
 
       for (const slot of SKELETON) {
         if (this.ended) return;
+        // A slot with no occupant in this phase does not exist in this phase.
+        if (!slot[this.phase]) continue;
         this.stage = slot[this.phase];
         await this.doStage(this.stage, slot);
         await this.flush();          // stage boundary: dead time, safe to write
@@ -660,6 +696,18 @@ export class Session {
        */
       const elapsed = Date.now() - started;
       this.slotDebtMs = (this.slotDebtMs || 0) + Math.max(0, elapsed - slotMs);
+
+      /*
+       * PHASE 1 DOES NOT PAD. There is no retention interval to protect, so padding would
+       * hold an empty screen open for no reason - which is most of what the session used
+       * to be. The slot duration still acts as a CEILING on how many items are presented,
+       * via capacityFor(), so a day with many items due cannot produce a fifteen-minute
+       * session. It just no longer acts as a floor.
+       *
+       * The cost is that crt_2's elapsed position varies with the content, so the fatigue
+       * measure is normalised by the actual gap rather than assumed constant.
+       */
+      if (this.phase === 'phase1') return;
 
       let left = slotMs - elapsed;
       if (left > 0 && this.slotDebtMs > 0) {
