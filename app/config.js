@@ -119,8 +119,12 @@ export const TIMING = {
 /** The local day boundary is fixed, not taken from the device's guess. */
 export const TIMEZONE = 'America/Los_Angeles';
 
-/**
- * Longer than this hidden or frozen and the session ends rather than resumes.
- * Mirrors ABANDON_AFTER_MS in lifecycle.js, which owns the behaviour.
+/*
+ * ABANDON_AFTER_MS USED TO BE MIRRORED HERE, and nothing imported the mirror.
+ *
+ * It was a literal restating a value owned by lifecycle.js, with a comment saying so -
+ * which is the same failure shape as a derived constant written out as a number. Changing
+ * one and not the other produces no error and no symptom, only two answers to the same
+ * question. Deleted rather than re-exported: lifecycle.js owns the behaviour, so it owns
+ * the number, and code that needs it imports it from there.
  */
-export const ABANDON_AFTER_MS = 5 * 60 * 1000;

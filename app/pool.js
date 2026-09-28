@@ -75,7 +75,23 @@ export const FOIL_COOLDOWN_DAYS = 30;
 /** A queued measurement this far past due has aged out of interpretability. */
 export const QUEUE_EXPIRY_DAYS = 21;
 
-/** Opening-check cap. Overflow stays queued rather than extending the session. */
+/**
+ * Opening-check cap. Overflow stays queued rather than extending the session.
+ *
+ * REVISIT THIS BEFORE PROBE B SHIPS. DO NOT INHERIT IT.
+ *
+ * 10 was sized against a 100-second opening slot in a 10.5-minute session. That session
+ * no longer exists: phase 1 runs four to six minutes, and while phase 2 restores fixed
+ * durations because the retention delays must be real, ten recognition trials plus a
+ * metacognitive judgement on each is a great deal of work to open with - and the opening
+ * is when the person using it is coldest.
+ *
+ * The arithmetic that set it still holds - four 1-day plus four 1-week items is eight at
+ * steady state, so the cap is rarely reached and the two spare slots absorb catch-up
+ * after a break. What has changed is the tolerance it was assumed against. Whoever builds
+ * Probe B should re-derive it from the session shape that actually exists then, with
+ * whatever end_reason and session-length evidence has accumulated by that point.
+ */
 export const OPENING_CAP = 10;
 
 export const ITEMS_PER_SESSION = 16;

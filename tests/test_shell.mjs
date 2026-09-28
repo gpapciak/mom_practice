@@ -1825,5 +1825,30 @@ section('36. the ANSWERED path - the one that had never been run');
 }
 
 
+/* ========================= 37. one source for the abandon threshold */
+
+section('37. the abandon threshold, and only one of it');
+{
+  installBrowser();
+  const lc = await import('../app/lifecycle.js?v=37');
+  const cfg = await import('../app/config.js?v=37');
+
+  check('three minutes, not five', lc.ABANDON_AFTER_MS === 3 * 60 * 1000,
+    String(lc.ABANDON_AFTER_MS));
+  check('still long enough to survive a doorbell or a short call',
+    lc.ABANDON_AFTER_MS >= 2 * 60 * 1000);
+
+  /*
+   * config.js used to export a mirror of this, with a comment saying lifecycle.js owned
+   * the behaviour - and nothing imported the mirror. A literal restating a value owned
+   * elsewhere fails the same way a derived constant written as a number does: change one
+   * and not the other and there is no error and no symptom, just two answers to the same
+   * question. Asserting the absence is how it stays absent.
+   */
+  check('config.js does NOT also declare it',
+    cfg.ABANDON_AFTER_MS === undefined, String(cfg.ABANDON_AFTER_MS));
+}
+
+
 console.log('\n' + (fail === 0 ? `ALL ${pass} CHECKS PASSED` : `${pass} passed, ${fail} FAILED`));
 process.exit(fail === 0 ? 0 : 1);

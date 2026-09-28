@@ -60,7 +60,19 @@
  */
 
 /** Longer than this and the session is over rather than paused. */
-export const ABANDON_AFTER_MS = 5 * 60 * 1000;
+/*
+ * THREE minutes, reduced from five on 2026-09-27.
+ *
+ * Interruption length does not scale with session length - a phone call is a phone call -
+ * so this is not simply a proportion of the session. But the CONSEQUENCE does scale. At
+ * 10.5 minutes a five-minute absence left a session with a hole in it. At four to six
+ * minutes it leaves a session that is mostly hole, and returning to a screen mid-task
+ * after five minutes away means returning to something there is no memory of starting.
+ *
+ * Three minutes still survives a lid-close, a doorbell or a short call, and still leaves
+ * a resumed session recognisably a session.
+ */
+export const ABANDON_AFTER_MS = 3 * 60 * 1000;
 
 /** Heartbeat period. Short enough to localise a gap to the right trial. */
 const TICK_MS = 1000;
