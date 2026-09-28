@@ -52,15 +52,26 @@ function artwork(rand) {
  *
  * `photos` is reserved for imported blobs; when there are none it falls through to
  * generated art rather than to nothing.
+ *
+ * THE COPY MUST NOT ANNOUNCE THAT THERE IS NOTHING HERE.
+ *
+ * It used to read "Nothing to do here. It will move on by itself." That is accurate and
+ * it is the wrong thing to say. Watching a real session made the point: a program that
+ * tells someone it has nothing to show them, twice, has told them their time is being
+ * taken for reasons that are not theirs - and they are right.
+ *
+ * "A short rest" is true, is the same length, and gives the interval a purpose the
+ * person can accept. The interval exists for the instrument; it does not have to feel
+ * that way.
  */
 export async function run({ screenEl, ms, rand, photos }) {
   const frames = Math.max(1, Math.round(ms / FRAME_MS));
 
   screenEl.innerHTML = `
     <div class="pane">
-      <p class="lead">Just something to look at.</p>
+      <p class="lead">A short rest.</p>
       <div class="filler" id="fillerStage"></div>
-      <p class="instruction">Nothing to do here. It will move on by itself.</p>
+      <p class="instruction">Take a breath. It carries on in a moment.</p>
     </div>`;
 
   const stage = screenEl.querySelector('#fillerStage');
