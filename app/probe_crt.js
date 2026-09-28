@@ -172,7 +172,9 @@ export function analyseMovement(samples, start, onsetTime, clickTime) {
     decision_latency_ms: null,
     travel_latency_ms: null,
     travel_path_px: null,
-    n_mousemove_samples: samples.length
+    n_mousemove_samples: samples.length,
+    /** True when the hand was already moving as the target lit: no decision to time. */
+    moving_at_onset: false
   };
   if (!samples.length) return out;
 
@@ -192,8 +194,37 @@ export function analyseMovement(samples, start, onsetTime, clickTime) {
 
   if (onsetIdx >= 0) {
     const moveT = samples[onsetIdx].t;
-    out.decision_latency_ms = Math.round(moveT - onsetTime);
-    out.travel_latency_ms = Math.round(clickTime - moveT);
+    const decision = Math.round(moveT - onsetTime);
+
+    /*
+     * ALREADY MOVING WHEN THE TARGET LIT. Two of the first thirty-two trials came back
+     * with decision latencies of -4 ms and -3 ms, flagged `ok`.
+     *
+     * The threshold is distance from the home pad, so if the hand had already drifted
+     * more than 8 px before onset, the first sample crosses it and the "decision" is
+     * zero or negative. There is no decision time to measure on such a trial: the
+     * movement did not begin in response to anything.
+     *
+     * The response latency is still perfectly good - the click happened and it was
+     * correct - so the trial is NOT discarded. Only the split is unmeasurable, and
+     * nulling it is exactly how an analysis excludes it. A negative number that reads as
+     * a decision made before the stimulus appeared is far worse than an absent one.
+     */
+    if (decision <= 0) {
+      out.moving_at_onset = true;
+      return out;                       // both components stay null
+    }
+    out.decision_latency_ms = decision;
+
+    /*
+     * No click means no travel. On the one omission in that session, clickTime came
+     * through as 0, so `clickTime - moveT` produced -3995 ms of travel - a fabricated
+     * negative for a journey that never finished. Time-to-move is real on an omission and
+     * is kept; the travel component is not.
+     */
+    if (Number.isFinite(clickTime) && clickTime > moveT) {
+      out.travel_latency_ms = Math.round(clickTime - moveT);
+    }
   }
   return out;
 }
@@ -433,6 +464,10 @@ function oneTrial(session, { targets, trial, lastPosRef }) {
       const responseMs = Math.round(clickTime - onsetTime);
       const c = classify({ clicked, expected, responseMs, beforeOnset: false });
       const mv = analyseMovement(samples, start, onsetTime, clickTime);
+      // Tallied per session, not per row, because the trial itself is still good - only
+      // its decision/travel split is unmeasurable. A rising count would mean the hand is
+      // not returning to rest between trials, which changes what the split measures.
+      if (mv.moving_at_onset) session.movingAtOnset = (session.movingAtOnset || 0) + 1;
 
       finish({
         clicked,

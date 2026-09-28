@@ -616,6 +616,21 @@ export class Session {
     // batch to travel in - an eviction detected at boot, a batch quarantined on a
     // previous drain.
     const events = (await this.contentEvents()).concat(await store.takeQueuedEvents());
+    /*
+     * Surfaced per session rather than per row. On the first complete session two of
+     * thirty-two trials had the hand already moving when the target lit, so their
+     * decision/travel split was unmeasurable and is now null. The response latencies are
+     * fine, so nothing is lost from the primary measure - but a rising share would mean
+     * the hand is not coming back to rest between trials, which changes what the split
+     * means, and that is worth seeing without reading every row.
+     */
+    if (this.movingAtOnset) {
+      events.push({
+        logged_at_ms: Date.now(), source: 'client', type: 'crt_moving_at_onset',
+        detail: `${this.movingAtOnset} of ${this.nTrials} trials: decision/travel split`
+          + ' nulled because movement began before stimulus onset'
+      });
+    }
     await upload.enqueue(rows, [sessionRow], events);
 
     lifecycle.clearAlive();

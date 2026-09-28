@@ -1949,5 +1949,68 @@ section('40. Probe A says what it is for');
 }
 
 
+/* ========================= 41. a latency split that cannot be measured is null */
+
+section('41. no fabricated negative latencies');
+{
+  installBrowser();
+  const crt = await import('../app/probe_crt.js?v=41');
+  const start = { x: 700, y: 400 };
+
+  /*
+   * BOTH CASES CAME FROM THE FIRST COMPLETE SESSION ON REAL HARDWARE, in real rows.
+   *
+   *   two trials of thirty-two reported decision latencies of -4 ms and -3 ms, flagged ok
+   *   the one omission reported travel_latency_ms of -3995 ms
+   *
+   * Neither is possible. The first means the hand had already drifted past the 8 px
+   * threshold when the target lit, so there is no decision to time. The second divided a
+   * journey that never finished, because clickTime arrives as the onset time on an
+   * omission and the subtraction went backwards.
+   *
+   * Both are nulled rather than discarded: the response latency is the primary measure and
+   * it is perfectly good in both cases. A null is how an analysis excludes a component;
+   * a negative number that reads as a decision taken before the stimulus is worse than an
+   * absent one, because it will be averaged.
+   */
+
+  // Already moving: the first sample is already past the threshold.
+  const moving = crt.analyseMovement(
+    [{ t: 1000, x: 740, y: 400 }, { t: 1100, x: 900, y: 400 }],
+    start, 1005, 1200);
+  check('an already-moving trial nulls the decision component',
+    moving.decision_latency_ms === null, String(moving.decision_latency_ms));
+  check('and nulls travel too, since the split is what is unmeasurable',
+    moving.travel_latency_ms === null, String(moving.travel_latency_ms));
+  check('and says so, so it can be counted', moving.moving_at_onset === true);
+  check('the path length is still measured', moving.travel_path_px > 0);
+
+  // An omission: clickTime comes through as the onset time.
+  const omitted = crt.analyseMovement(
+    [{ t: 1100, x: 705, y: 400 }, { t: 2000, x: 760, y: 400 }],
+    start, 1000, 1000);
+  check('an omission keeps time-to-move, which is real',
+    omitted.decision_latency_ms > 0, String(omitted.decision_latency_ms));
+  check('but reports NO travel, rather than a negative one',
+    omitted.travel_latency_ms === null, String(omitted.travel_latency_ms));
+
+  // The ordinary case must be untouched.
+  const good = crt.analyseMovement(
+    [{ t: 1300, x: 760, y: 400 }, { t: 1800, x: 1000, y: 400 }],
+    start, 1000, 2000);
+  check('a normal trial still splits', good.decision_latency_ms === 300
+    && good.travel_latency_ms === 700,
+    `${good.decision_latency_ms}/${good.travel_latency_ms}`);
+  check('and the two components sum to the response latency',
+    good.decision_latency_ms + good.travel_latency_ms === 2000 - 1000);
+  check('a normal trial is not flagged', good.moving_at_onset === false);
+
+  // No movement at all is a real outcome and must not be turned into zeros.
+  const still = crt.analyseMovement([], start, 1000, 2000);
+  check('no samples leaves both null, not zero',
+    still.decision_latency_ms === null && still.travel_latency_ms === null);
+}
+
+
 console.log('\n' + (fail === 0 ? `ALL ${pass} CHECKS PASSED` : `${pass} passed, ${fail} FAILED`));
 process.exit(fail === 0 ? 0 : 1);
