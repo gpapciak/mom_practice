@@ -1435,8 +1435,19 @@ section('29. no name in the code, and no time of day in the greeting');
   check('and greets by name if one is set', close.includes(STAND_IN));
   check('the closing note is config, so its wording needs no deploy',
     sc.closeHtml({ closing_note: 'Great effort!' }).includes('Great effort!'));
-  check('an empty closing note simply omits the line',
-    !sc.closeHtml({ closing_note: '' }).includes('<p class="sub">'));
+  /*
+   * The fixed line is now always present, so this asserts the new intent rather than the
+   * old one: an empty closing_note must leave a clean sentence, not a dangling space.
+   * The user should know the DAY is done, not merely that something ended - the screen
+   * being replaced by a Start button is what caused a session to be started over.
+   */
+  const bare = sc.closeHtml({ closing_note: '' });
+  check('the day is stated as finished even with no closing note',
+    bare.includes("That's everything for today."), bare);
+  check('and an empty note leaves no trailing space before the tag',
+    !bare.includes('today. </p>'), bare);
+  check('a note is appended to the same line rather than stacking another',
+    (sc.closeHtml({ closing_note: 'Thank you.' }).match(/class="sub"/g) || []).length === 1);
   check('NEVER a score, count or streak on the close',
     !/\b\d+\s*(of|\/)\s*\d+|score|streak|correct|points/i.test(close), close);
 
@@ -1847,6 +1858,94 @@ section('37. the abandon threshold, and only one of it');
    */
   check('config.js does NOT also declare it',
     cfg.ABANDON_AFTER_MS === undefined, String(cfg.ABANDON_AFTER_MS));
+}
+
+
+/* ========================= 38. the session ends, and stays ended */
+
+section('38. a completed session is the last thing on screen');
+{
+  installBrowser();
+  const sc = await import('../app/screens.js?v=38');
+  const cfg = await import('../app/config.js?v=38');
+
+  /*
+   * THE BUG THIS SECTION EXISTS FOR. The close screen dwelled three seconds, then the
+   * caller redrew the opening screen 1.5s later - for every outcome, because the comment
+   * said "whether it completed or was abandoned". So about four and a half seconds after
+   * "You've finished the practice" there was a Start button, and it was pressed. Three
+   * sessions were recorded on one day.
+   *
+   * The original reasoning - no "resume?" prompt, because a screen referring to a previous
+   * screen is unusable to someone who cannot carry instructions forward - is still right
+   * for ABANDONMENT. It was simply applied to completion too, where it inverts.
+   */
+  const close = sc.closeHtml({ display_name: 'TESTNAME', closing_note: 'Thank you.' });
+  check('the close says the practice is finished', /finished the practice/i.test(close));
+  check('AND that the day is done, which is the part that was missing',
+    /everything for today/i.test(close), close);
+  check('it offers nothing to press', !/<button/.test(close), close);
+
+  // Already-done screen: shown instead of the opening one, and equally buttonless.
+  const done = sc.alreadyDoneHtml({ display_name: 'TESTNAME' });
+  check('the already-done screen greets, then states the fact',
+    /TESTNAME/.test(done) && /already done/i.test(done), done);
+  check('and offers nothing to press either',
+    !/<button/.test(done) && !/start/i.test(done), done);
+  check('it carries message_line when set, since that is family news',
+    sc.alreadyDoneHtml({ message_line: 'Anna comes Thursday.' })
+      .includes('Anna comes Thursday.'));
+
+  check('the guard is on by default', cfg.DEFAULTS.one_session_per_day === true);
+}
+
+section('39. Probe A runs on every Nth session, both blocks or neither');
+{
+  /*
+   * Counted in SESSIONS, not on a calendar. A fixed Monday and Thursday would silently
+   * drop an occasion whenever one of those days was missed; every third session keeps
+   * roughly a third of sessions measured however irregular the pattern is.
+   */
+  const runs = (seq, everyN) => (seq % Math.max(1, everyN)) === 1 % Math.max(1, everyN);
+
+  check('N=1 runs every session', [1, 2, 3, 4, 5].every(q => runs(q, 1)));
+  check('N=3 runs on 1, 4, 7, 10', [1, 4, 7, 10].every(q => runs(q, 3)));
+  check('and not on 2, 3, 5, 6', [2, 3, 5, 6].every(q => !runs(q, 3)));
+  check('roughly a third of sessions over a long run', (() => {
+    let n = 0;
+    for (let q = 1; q <= 300; q++) if (runs(q, 3)) n++;
+    return n === 100;
+  })());
+
+  const cfg = await import('../app/config.js?v=39');
+  check('the cadence is config, so it needs no deploy to change',
+    cfg.DEFAULTS.crt_every_n_sessions === 3);
+
+  // A session with one block and not the other would leave the fatigue measure with
+  // nothing to subtract, so the decision is taken once per session, never per slot.
+  const S = await import('../app/session.js?v=39');
+  const crtSlots = S.SKELETON.filter(sl => sl.slot.startsWith('crt'));
+  check('there are exactly two blocks to include or exclude together',
+    crtSlots.length === 2, String(crtSlots.length));
+}
+
+section('40. Probe A says what it is for');
+{
+  installBrowser();
+  const crt = await import('../app/probe_crt.js?v=40');
+  const html = crt.instructionsHtml();
+
+  // Being asked to do something repetitive with no stated reason is noticed by any
+  // capable adult, and noticing it is a reason to stop.
+  check('it states what the part measures',
+    /how quickly you.re clicking/i.test(html), html);
+  check('and how long it takes, because not knowing is its own reason to refuse',
+    /about a minute|a minute/i.test(html));
+  check('it no longer denies being a test instead of saying what it is',
+    !/not a test/i.test(html), html);
+  check('the mechanics are still there', /turn blue/i.test(html));
+  check('and it is still not a frozen stimulus, so wording is free',
+    crt.PROBE_VERSION === 1);
 }
 
 

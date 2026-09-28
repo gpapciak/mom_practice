@@ -250,13 +250,23 @@ export const FIELD_HTML = `
  *
  * It shows the actual layout with one target lit, because a picture of what is about
  * to happen is worth more than a description of it.
+ *
+ * IT SAYS WHAT THE PART IS FOR. The first version said "it is not a test of anything",
+ * which is a denial rather than a purpose and invites exactly the question it deflects.
+ * Being asked to do something repetitive with no stated reason is noticed by any capable
+ * adult, and noticing it is a reason to stop.
+ *
+ * So: what it measures, and how long it takes. Both true. "How quickly you're clicking
+ * today" is honest without being clinical, and the duration is stated because not knowing
+ * how long something lasts is its own reason to refuse.
  */
 export function instructionsHtml() {
   return `
     <div class="pane">
       <p class="lead">A circle will turn blue.</p>
-      <p class="sub">Click it as quickly as you can.<br>
-        It will happen several times. It is not a test of anything.</p>
+      <p class="sub">Click it as soon as it does.</p>
+      <p class="instruction">This part just checks how quickly you're clicking today.
+        It takes about a minute.</p>
       <div class="crt crt-demo" aria-hidden="true">
         <span class="crt-target demo-socket"></span>
         <span class="crt-target demo-socket lit"><span class="crt-bullseye"></span></span>

@@ -71,6 +71,9 @@ function screens(config) {
     { id: 'filler', note: 'Something to look at, and it says there is nothing to do.', html: '' },
     { id: 'close', note: 'Warm, brief, no summary of performance. Never a score.',
       html: sc.closeHtml(config) },
+    { id: 'already_done',
+      note: 'Shown INSTEAD of the opening screen once today is done. No Start button.',
+      html: sc.alreadyDoneHtml(config) },
     { id: 'session_inactive', note: 'config session_active = FALSE. The remote off switch.',
       html: sc.inactiveHtml(config) }
   ];

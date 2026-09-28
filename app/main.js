@@ -14,6 +14,7 @@ import * as lifecycle from './lifecycle.js';
 import { Session } from './session.js';
 import { parseItems } from './training.js';
 import * as screens from './screens.js';
+import { localDateFor } from './dates.js';
 
 /** Skipped rows are reported rather than swallowed: the tab is edited by hand. */
 function trainingParse(rows) {
@@ -58,6 +59,8 @@ const el = id => document.getElementById(id);
 
 let config = Object.assign({}, DEFAULTS);
 let trainingItems = [];
+/** Has a session COMPLETED today? Read from local state at boot, set on completion. */
+let completedToday = false;
 
 async function boot() {
   if (SCREENS) {
@@ -103,6 +106,9 @@ async function boot() {
   // Training content, cache-first so a session can run with no network at all. The
   // cache refreshes whenever the network answers.
   trainingItems = (await store.getMeta('training_items', [])) || [];
+
+  // Survives a reopen, which is the case that matters: the Dock icon is one click away.
+  completedToday = (await store.getMeta('last_completed_date', null)) === localDateFor(Date.now());
 
   drawOpening();
 
@@ -187,12 +193,18 @@ function drawOpening() {
     el('screen').innerHTML = screens.inactiveHtml(config);
     return;
   }
+  // Already done today: state it, and offer nothing to press. See alreadyDoneHtml.
+  if (config.one_session_per_day && completedToday) {
+    el('screen').innerHTML = screens.alreadyDoneHtml(config);
+    return;
+  }
   el('screen').innerHTML = screens.openHtml(config);
   el('start').addEventListener('click', startSession, { once: true });
 }
 
 async function startSession() {
   await recordStart();
+  completedToday = false;
   const session = new Session({ config, debug: DEBUG, dry: DRY, openedAt: PAGE_OPENED });
   // Parsed fresh each session so an edit made this morning is picked up today.
   session.trainingItems = trainingParse(trainingItems);
@@ -201,11 +213,29 @@ async function startSession() {
   try {
     await session.run();
   } finally {
-    // Whether it completed or was abandoned, the next thing anyone sees is the
-    // ordinary opening screen. No "resume?" prompt: a screen that refers to a
-    // previous screen is unusable by someone who cannot carry instructions
-    // forward, and a half-finished session is not worth resuming anyway.
-    setTimeout(drawOpening, 1500);
+    /*
+     * A COMPLETED session is the last thing on screen. Nothing replaces it.
+     *
+     * This used to redraw the opening screen 1.5s after run() resolved, for every
+     * outcome. Since the close screen dwells for three seconds first, that put a Start
+     * button on screen about four and a half seconds after "You've finished the
+     * practice" - and it was pressed, which began a second session. Watched in use it
+     * read as "I finished and it made me start again", which for someone who cannot
+     * reconstruct the last few minutes is close to the worst thing the app could say.
+     *
+     * The original reasoning - no "resume?" prompt, because a screen referring to a
+     * previous screen is unusable to someone who cannot carry instructions forward -
+     * was about ABANDONMENT, and it is still right there. It was simply applied to
+     * completion too, where the effect is the opposite of intended.
+     *
+     * So: abandoned goes back to the opening screen, where starting again is the
+     * correct offer. Completed stays put.
+     */
+    if (session.ended && session.endReason === 'completed') {
+      completedToday = true;
+    } else {
+      setTimeout(drawOpening, 1500);
+    }
   }
 }
 

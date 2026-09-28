@@ -96,7 +96,33 @@ export const DEFAULTS = {
    * default is a plain thank-you: effort praise is the register used with children
    * and with patients, and the brief rules out both registers.
    */
-  closing_note: 'Thank you.'
+  closing_note: 'Thank you.',
+
+  /**
+   * Refuse a second session once one has COMPLETED on the same local date.
+   *
+   * An abandoned session never blocks a retry - only a completed one. Set FALSE in the
+   * Sheet to allow repeats, with no deploy.
+   *
+   * Why on by default: the app is one click away in the Dock, and someone who cannot
+   * reconstruct the last half hour cannot know whether they have already done it. A
+   * second session the same day also puts a row in the series with
+   * days_since_prev_session near zero, which is not a measurement of anything.
+   */
+  one_session_per_day: true,
+
+  /**
+   * Run Probe A on every Nth session. 1 means every session.
+   *
+   * Counted in SESSIONS rather than on a calendar, deliberately: a fixed Monday and
+   * Thursday would silently drop an occasion whenever one of those days was missed,
+   * whereas every third session keeps roughly a third of sessions measured however
+   * irregular the pattern turns out to be.
+   *
+   * 38 clicks of reaction time is the least willingly done part of the session. Three
+   * times a week costs precision that can be recovered by waiting; refusal cannot be.
+   */
+  crt_every_n_sessions: 3
 };
 
 /**

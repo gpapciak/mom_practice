@@ -443,6 +443,16 @@ export class Session {
     this.seq = (await store.peekSessionSeq()) + 1;
     this.seed = `s${this.seq}-${this.uid.slice(0, 8)}`;
 
+    /*
+     * Does Probe A run this session? Every Nth, counted in sessions.
+     *
+     * Decided once here rather than asked per slot, so crt_1 and crt_2 can never
+     * disagree - a session with one block and not the other would give a fatigue
+     * measure with nothing to subtract.
+     */
+    const everyN = Math.max(1, Number(this.config.crt_every_n_sessions) || 1);
+    this.crtThisSession = (this.seq % everyN) === 1 % everyN;
+
     const prev = await store.lastSessionWithTrials();
     this.daysSincePrev = prev && prev.start_pressed_at_utc
       ? +((this.openedAt - prev.start_pressed_at_utc) / 86400000).toFixed(4)
@@ -534,6 +544,8 @@ export class Session {
         if (this.ended) return;
         // A slot with no occupant in this phase does not exist in this phase.
         if (!slot[this.phase]) continue;
+        // Probe A only on its own sessions. Both blocks or neither.
+        if (slot.slot.startsWith('crt') && !this.crtThisSession) continue;
         this.stage = slot[this.phase];
         await this.doStage(this.stage, slot);
         await this.flush();          // stage boundary: dead time, safe to write
@@ -571,6 +583,9 @@ export class Session {
   async end(reason) {
     if (this.ended) return;
     this.ended = true;
+    // Kept so the caller can tell a completed session from an abandoned one without
+    // re-reading the row. What is shown next depends on it: see main.js.
+    this.endReason = reason;
     if (this.watcher) this.watcher.stop();
     await this.flush();
 
@@ -591,6 +606,12 @@ export class Session {
 
     const rows = await store.trialsForSession(this.uid);
     await store.putSession(sessionRow);
+    // Only a COMPLETED session closes the day. An abandoned one must never block a
+    // retry: the commonest reason to abandon is something going wrong.
+    if (reason === 'completed') {
+      await store.setMeta('last_completed_date',
+        this.todayLocal || localDateFor(this.startedAt || this.openedAt));
+    }
     // Content notices from this session, plus anything queued earlier that had no
     // batch to travel in - an eviction detected at boot, a batch quarantined on a
     // previous drain.

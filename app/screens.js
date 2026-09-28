@@ -114,11 +114,42 @@ export function closeHtml(config) {
   const name = String((config && config.display_name) || '').trim();
   const note = String((config && config.closing_note) || '').trim();
   const line = String((config && config.message_line) || '').trim();
+  /*
+   * "That's everything for today" is FIXED and not configurable.
+   *
+   * The first version said only that the practice was finished, held that for three
+   * seconds, and was then replaced by the opening screen with a Start button. Watched
+   * in use, that read as "I finished and it made me start again" - and Start was
+   * pressed, which began a second session.
+   *
+   * Two things follow. The screen now states that the day is done, not merely that
+   * something ended; and it is the LAST thing shown, never replaced. See main.js.
+   */
   return `
     <div class="pane">
       <p class="lead">You've finished the practice${name ? ', ' + esc(name) : ''}.</p>
-      ${note ? `<p class="sub">${esc(note)}</p>` : ''}
+      <p class="sub">That's everything for today.${note ? ' ' + esc(note) : ''}</p>
       ${line ? `<p class="instruction">${esc(line)}</p>` : ''}
+    </div>`;
+}
+
+/**
+ * Shown instead of the opening screen when today's practice is already done.
+ *
+ * Because the app is one click away in the Dock, and someone who cannot reconstruct the
+ * last half hour has no way to know whether they have already done it. Offering Start
+ * again asks a question they cannot answer, and answering it wrongly costs a duplicate
+ * session in the record and a repeated ten minutes of their day.
+ *
+ * It states the fact and closes the matter. No Start button, nothing to decide.
+ */
+export function alreadyDoneHtml(config) {
+  const note = String((config && config.message_line) || '').trim();
+  return `
+    <div class="pane">
+      <p class="lead">${hello(config)}</p>
+      <p class="sub">Today's practice is already done. Nothing more to do.</p>
+      ${note ? `<p class="instruction">${esc(note)}</p>` : ''}
     </div>`;
 }
 
